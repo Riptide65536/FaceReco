@@ -3,6 +3,17 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
+.vscode/
 facial_system.db
 *.sqlite
 *.sqlite3
+
+# Runtime-generated state
+config/idlists.txt
+config/totalUser.txt
+config/userdic.txt
+data/*
+!data/__init__.py
+!data/.gitkeep
+model/*
+!model/.gitkeep

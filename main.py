@@ -14,6 +14,7 @@ import cv2, threading, os, shutil
 from PIL import Image
 import ast
 import datetime
+from paths import asset_path, ui_path
 import sqls # sqls是自己写的模块
 
 systemLock = 0
@@ -22,10 +23,19 @@ faceSamples = []
 idlists = []
 userdic = {}
 
+def _resolve_user_data_dir(user_id, username):
+    id_dir = os.path.join('data', str(user_id))
+    name_dir = os.path.join('data', str(username))
+    if os.path.isdir(id_dir):
+        return id_dir
+    if os.path.isdir(name_dir):
+        return name_dir
+    return None
+
 class MWindow():
 
     def __init__(self):
-        self.mui = QUiLoader().load('MUi.ui')
+        self.mui = QUiLoader().load(ui_path('MUi.ui'))
         self.mui.setFixedSize(self.mui.width(), self.mui.height())
         self.mui.pushButton1.clicked.connect(self.start)
         self.mui.pushButton2.clicked.connect(self.close)
@@ -63,10 +73,16 @@ class MWindow():
 
         for i in range(1, totalUser+1):
             if i in userdic:
-                for ii in os.listdir('data' + '/' + userdic[i]):
-                    img = Image.open('data/' + userdic[i] + '/' + ii).convert('L')
+                user_dir = _resolve_user_data_dir(i, userdic[i])
+                if not user_dir:
+                    continue
+                for ii in os.listdir(user_dir):
+                    image_path = os.path.join(user_dir, ii)
+                    if not os.path.isfile(image_path):
+                        continue
+                    img = Image.open(image_path).convert('L')
                     img_np = np.array(img)
-                    detectorofInit = cv2.CascadeClassifier('attachment/haarcascade_frontalface_default.xml')
+                    detectorofInit = cv2.CascadeClassifier(asset_path('haarcascade_frontalface_default.xml'))
                     facesofInit = detectorofInit.detectMultiScale(img_np)
                     for (x, y, w, h) in facesofInit:
                         faceSamples.append(img_np[y:y + h, x:x + w])
@@ -385,28 +401,28 @@ class MWindow():
         if self.busy1 == True:
             if self.cam1.url in self.cameraList:
                 self.cameraList.remove(self.cam1.url)
-            self.mui.display1.setPixmap(QPixmap('./attachment/nosignal.png'))
+            self.mui.display1.setPixmap(QPixmap(asset_path('nosignal.png')))
             self.cam1.close()
             print('1close')
             self.busy1 = False
         if self.busy2 == True:
             if self.cam2.url in self.cameraList:
                 self.cameraList.remove(self.cam2.url)
-            self.mui.display2.setPixmap(QPixmap('./attachment/nosignal.png'))
+            self.mui.display2.setPixmap(QPixmap(asset_path('nosignal.png')))
             self.cam2.close()
             print('2close')
             self.busy2 = False
         if self.busy3 == True:
             if self.cam3.url in self.cameraList:
                 self.cameraList.remove(self.cam3.url)
-            self.mui.display3.setPixmap(QPixmap('./attachment/nosignal.png'))
+            self.mui.display3.setPixmap(QPixmap(asset_path('nosignal.png')))
             self.cam3.close()
             print('3close')
             self.busy3 = False
         if self.busy4 == True:
             if self.cam4.url in self.cameraList:
                 self.cameraList.remove(self.cam4.url)
-            self.mui.display4.setPixmap(QPixmap('./attachment/nosignal.png'))
+            self.mui.display4.setPixmap(QPixmap(asset_path('nosignal.png')))
             self.cam4.close()
             print('4close')
             self.busy4 = False
@@ -418,7 +434,7 @@ class MWindow():
             self.cam1.close()
             print('1close')
             self.busy1 = False
-            self.mui.display1.setPixmap(QPixmap('./attachment/nosignal.png'))
+            self.mui.display1.setPixmap(QPixmap(asset_path('nosignal.png')))
         else:
             QMessageBox.about(self.mui, '错误', '窗口1并没有打开')
 
@@ -429,7 +445,7 @@ class MWindow():
             self.cam2.close()
             print('2close')
             self.busy2 = False
-            self.mui.display2.setPixmap(QPixmap('./attachment/nosignal.png'))
+            self.mui.display2.setPixmap(QPixmap(asset_path('nosignal.png')))
         else:
             QMessageBox.about(self.mui, '错误', '窗口2并没有打开')
 
@@ -440,7 +456,7 @@ class MWindow():
             self.cam3.close()
             print('3close')
             self.busy3 = False
-            self.mui.display3.setPixmap(QPixmap('./attachment/nosignal.png'))
+            self.mui.display3.setPixmap(QPixmap(asset_path('nosignal.png')))
         else:
             QMessageBox.about(self.mui, '错误', '窗口3并没有打开')
 
@@ -451,14 +467,14 @@ class MWindow():
             self.cam4.close()
             print('4close')
             self.busy4 = False
-            self.mui.display4.setPixmap(QPixmap('./attachment/nosignal.png'))
+            self.mui.display4.setPixmap(QPixmap(asset_path('nosignal.png')))
         else:
             QMessageBox.about(self.mui, '错误', '窗口4并没有打开')
 
 class AddWindow():
 
     def __init__(self):
-        self.ui = QUiLoader().load('Add.ui')
+        self.ui = QUiLoader().load(ui_path('Add.ui'))
         self.ui.setFixedSize(self.ui.width(), self.ui.height())
         self.ui.buttonBox.accepted.connect(self.ok)
         self.ui.buttonBox.rejected.connect(self.cancel)
@@ -669,7 +685,7 @@ class AddWindow():
 
 class DelWindow():
     def __init__(self):
-        self.ui = QUiLoader().load('Del.ui')
+        self.ui = QUiLoader().load(ui_path('Del.ui'))
         self.ui.setFixedSize(self.ui.width(), self.ui.height())
         self.ui.buttonBox.accepted.connect(self.ok)
         self.ui.buttonBox.rejected.connect(self.cancel)
@@ -701,7 +717,7 @@ class DelWindow():
 class DelFaceWindow():
 
     def __init__(self):
-        self.ui = QUiLoader().load('DelFace.ui')
+        self.ui = QUiLoader().load(ui_path('DelFace.ui'))
         self.ui.buttonBox.accepted.connect(self.ok)
         self.ui.buttonBox.rejected.connect(self.cancel)
         for i in range(1, totalUser+1):
@@ -725,15 +741,28 @@ class DelFaceWindow():
                         idlists.remove(i)
                         # 删idlists
         # 删除图片
-        shutil.rmtree('data'+'/'+faceTodel)
+        label_of_face = None
+        for label, username in userdic.items():
+            if username == faceTodel:
+                label_of_face = label
+                break
+        for candidate in [os.path.join('data', faceTodel), os.path.join('data', str(label_of_face))]:
+            if candidate and os.path.isdir(candidate):
+                shutil.rmtree(candidate)
         # faceSamples要置空 重新训练
         faceSamples = []
         for i in range(1, totalUser+1):
             if i in userdic:
-                for ii in os.listdir('data' + '/' + userdic[i]):
-                    img = Image.open('data/' + userdic[i] + '/' + ii).convert('L')
+                user_dir = _resolve_user_data_dir(i, userdic[i])
+                if not user_dir:
+                    continue
+                for ii in os.listdir(user_dir):
+                    image_path = os.path.join(user_dir, ii)
+                    if not os.path.isfile(image_path):
+                        continue
+                    img = Image.open(image_path).convert('L')
                     img_np = np.array(img)
-                    detectorofInit = cv2.CascadeClassifier('attachment/haarcascade_frontalface_default.xml')
+                    detectorofInit = cv2.CascadeClassifier(asset_path('haarcascade_frontalface_default.xml'))
                     facesofInit = detectorofInit.detectMultiScale(img_np)
                     for (x, y, w, h) in facesofInit:
                         faceSamples.append(img_np[y:y + h, x:x + w])
@@ -811,10 +840,10 @@ class LuruWindow():
 
     def __init__(self):
         global systemLock
-        self.ui = QUiLoader().load('Luru.ui')
+        self.ui = QUiLoader().load(ui_path('Luru.ui'))
         self.ui.setFixedSize(self.ui.width(), self.ui.height())
 
-        self.ui.lurudisplay2.setPixmap(QPixmap('attachment/avatar.png'))
+        self.ui.lurudisplay2.setPixmap(QPixmap(asset_path('avatar.png')))
 
         self.ui.pushButton2.clicked.connect(self.closeQuit)
         self.ui.pushButton.clicked.connect(self.snap)
@@ -897,7 +926,7 @@ class LuruWindow():
 
         if self.ui.lineEdit.text() == '':
             QMessageBox.about(self.ui, '错误', '你还没有输入姓名')
-        elif not os.path.exists('data/' + self.ui.lineEdit.text()):
+        elif not os.path.exists('data/' + self.ui.lineEdit.text()) and not os.path.exists('data/' + str(totalUser + 1)):
             QMessageBox.about(self.ui, '错误', '该用户不存在或未进行录入')
         else:
 
@@ -948,15 +977,22 @@ class LuruWindow():
 
             self.recog = cv2.face.LBPHFaceRecognizer_create()
             # 初始化人脸识别算法
-            for i in os.listdir('data/' + self.ui.lineEdit.text()):
-                # img = cv2.imread('data/' + self.ui.lineEdit.text() + '/' + i)
-                img = Image.open('data/' + self.ui.lineEdit.text() + '/' + i).convert('L')
+            train_dir = os.path.join('data', self.ui.lineEdit.text())
+            if not os.path.isdir(train_dir):
+                train_dir = os.path.join('data', str(totalUser + 1))
 
-                print('当前训练的人脸图片路径：' + 'data/' + self.ui.lineEdit.text() + '/' + i)
+            for i in os.listdir(train_dir):
+                # img = cv2.imread('data/' + self.ui.lineEdit.text() + '/' + i)
+                image_path = os.path.join(train_dir, i)
+                if not os.path.isfile(image_path):
+                    continue
+                img = Image.open(image_path).convert('L')
+
+                print('褰撳墠璁粌鐨勪汉鑴稿浘鐗囪矾寰勶細' + image_path)
                 # id = int(i.split('.')[0])
                 # self.ids.append(id)
                 img_np = np.array(img)
-                detectorOfTrain = cv2.CascadeClassifier('attachment/haarcascade_frontalface_default.xml')
+                detectorOfTrain = cv2.CascadeClassifier(asset_path('haarcascade_frontalface_default.xml'))
                 facesofTrain = detectorOfTrain.detectMultiScale(img_np)
 
                 # li.append(totalUser+1)
@@ -1045,7 +1081,7 @@ class LuruWindow():
         self.maxSampleNum = 10
 
         self.lurucam.cap.release()
-        self.ui.lurudisplay.setPixmap(QPixmap('./attachment/nosignal.png'))
+        self.ui.lurudisplay.setPixmap(QPixmap(asset_path('nosignal.png')))
 
         self.lurucamReal = Camera(0, self.ui.lurudisplay)
         self.luruThreadReal = threading.Thread(target=self.getNewFaceDisplay)
@@ -1090,7 +1126,7 @@ class LuruWindow():
                     print('lurucamReal  XXXXXXXXXXX released!' * 5)
                     self.sampleNum = 0
 
-                    self.ui.lurudisplay.setPixmap(QPixmap('./attachment/nosignal.png'))
+                    self.ui.lurudisplay.setPixmap(QPixmap(asset_path('nosignal.png')))
                     if systemLock == 1:
                         mainwindow.start1(0, self.integratedNamePlace, self.integratedDisplaymode)
                     elif systemLock == 2:
@@ -1126,7 +1162,7 @@ class LuruWindow():
 class ResetWindow():
 
     def __init__(self):
-        self.ui = QUiLoader().load('ResetQ.ui')
+        self.ui = QUiLoader().load(ui_path('ResetQ.ui'))
         self.ui.setFixedSize(self.ui.width(), self.ui.height())
         self.ui.buttonBox.accepted.connect(self.yes)
         self.ui.buttonBox.accepted.connect(self.no)
@@ -1167,7 +1203,7 @@ class ResetWindow():
 
 class LogWindow():
     def __init__(self):
-        self.ui = QUiLoader().load('Log.ui')
+        self.ui = QUiLoader().load(ui_path('Log.ui'))
         self.ui.setFixedSize(self.ui.width(), self.ui.height())
         self.ui.tableWidget.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.ui.pushButton.clicked.connect(self.inquiryDB)
@@ -1270,7 +1306,7 @@ class Camera:
         self.url = url
         self.outLabel = outLabel
         self.cap = cv2.VideoCapture(self.url)
-        self.detector = cv2.CascadeClassifier('attachment/haarcascade_frontalface_default.xml')
+        self.detector = cv2.CascadeClassifier(asset_path('haarcascade_frontalface_default.xml'))
         self.recognizer = cv2.face.LBPHFaceRecognizer_create()
 
     def display(self):
@@ -1355,7 +1391,7 @@ class Camera:
                     cv2.waitKey(10)
                 else:
                     self.cap.release()
-                    self.outLabel.setPixmap(QPixmap('./attachment/nosignal.png'))
+                    self.outLabel.setPixmap(QPixmap(asset_path('nosignal.png')))
                     print('released!')
                     break
 
@@ -1394,7 +1430,7 @@ class Camera:
                     cv2.waitKey(10)
                 else:
                     self.cap.release()
-                    self.outLabel.setPixmap(QPixmap('./attachment/nosignal.png'))
+                    self.outLabel.setPixmap(QPixmap(asset_path('nosignal.png')))
                     print('released!')
                     break
 
@@ -1417,7 +1453,7 @@ class Camera:
                     cv2.waitKey(10)
                 else:
                     self.cap.release()
-                    self.outLabel.setPixmap(QPixmap('./attachment/nosignal.png'))
+                    self.outLabel.setPixmap(QPixmap(asset_path('nosignal.png')))
                     print('released!')
                     break
 
@@ -1457,7 +1493,7 @@ class Camera:
                     cv2.waitKey(10)
                 else:
                     self.cap.release()
-                    self.outLabel.setPixmap(QPixmap('./attachment/nosignal.png'))
+                    self.outLabel.setPixmap(QPixmap(asset_path('nosignal.png')))
                     print('released!')
                     break
 
@@ -1470,9 +1506,9 @@ class Camera:
 
 class LogInWindow():
     def __init__(self):
-        self.ui = QUiLoader().load('LogIn.ui')
+        self.ui = QUiLoader().load(ui_path('LogIn.ui'))
         self.ui.setFixedSize(self.ui.width(), self.ui.height())
-        self.ui.label.setPixmap(QPixmap('attachment/welcome.png'))
+        self.ui.label.setPixmap(QPixmap(asset_path('welcome.png')))
         self.ui.pushButton1.clicked.connect(self.loginfunction)
         self.ui.pushButton2.clicked.connect(self.registerfunction)
         self.StartSignal = False
@@ -1482,18 +1518,18 @@ class LogInWindow():
         print('登录按钮已经按下')
         self.sqloflogin.dbclose()
         self.sqloflogin.__init__()
-        self.accountlist = []
-        for i in self.sqloflogin.getAllaccount():
-            self.accountlist.append(i[0])
-        if self.ui.lineEdit1.text() == '':
+        self.accountlist = [i[0] for i in self.sqloflogin.getAllaccount()]
+
+        account = self.ui.lineEdit1.text().strip()
+        password = self.ui.lineEdit2.text()
+
+        if account == '':
             QMessageBox.about(self.ui, '错误', '您还没有输入账号')
-        elif self.ui.lineEdit2.text() == '':
+        elif password == '':
             QMessageBox.about(self.ui, '错误', '您还没有输入密码')
-        elif self.ui.lineEdit1.text() in self.accountlist:
-            prepassword = self.sqloflogin.loginAccountPassword(self.ui.lineEdit1.text())
-            password = prepassword[0]
-            if self.ui.lineEdit2.text() == password:
-                QMessageBox.about(self.ui, '登录成功', '欢迎使用!')
+        elif account in self.accountlist:
+            if self.sqloflogin.verify_login(account, password):
+                QMessageBox.about(self.ui, '登录成功', '欢迎使用！')
                 self.StartSignal = True
                 print(self.StartSignal)
                 self.ui.close()
@@ -1511,26 +1547,34 @@ class LogInWindow():
 
 class RegisterWindow():
     def __init__(self):
-        self.ui = QUiLoader().load('Register.ui')
+        self.ui = QUiLoader().load(ui_path('Register.ui'))
         self.ui.buttonBox.accepted.connect(self.ok)
         self.ui.buttonBox.rejected.connect(self.cancel)
         self.sqlofregister = sqls.SqlF()
     def ok(self):
-        accountlist = []
-        adminpassword = self.sqlofregister.loginAccountPassword('admin')[0]
-        for i in self.sqlofregister.getAllaccount():
-            accountlist.append(i[0])
-        if self.ui.lineEdit1.text() not in accountlist:
-            if self.ui.lineEdit3.text() == adminpassword:
-                newaccount = self.ui.lineEdit1.text()
-                newpassword = self.ui.lineEdit2.text()
-                self.sqlofregister.register(newaccount, newpassword)
-                QMessageBox.about(self.ui, '欢迎', '新用户注册成功，请记好账号密码！')
-                start_login.accountlist.append(newaccount)
-            else:
-                QMessageBox.about(self.ui, '错误', '超级管理员密码错误！')
-        else:
+        accountlist = [i[0] for i in self.sqlofregister.getAllaccount()]
+        newaccount = self.ui.lineEdit1.text().strip()
+        newpassword = self.ui.lineEdit2.text()
+        adminpassword = self.ui.lineEdit3.text()
+
+        if newaccount in accountlist:
             QMessageBox.about(self.ui, '错误', '该账户已经存在！')
+            return
+
+        if newpassword == '':
+            QMessageBox.about(self.ui, '错误', '密码不能为空！')
+            return
+
+        if not self.sqlofregister.verify_login('admin', adminpassword):
+            QMessageBox.about(self.ui, '错误', '超级管理员密码错误！')
+            return
+
+        if self.sqlofregister.register(newaccount, newpassword):
+            QMessageBox.about(self.ui, '欢迎', '新用户注册成功，请记好账号密码！')
+            if hasattr(start_login, 'accountlist'):
+                start_login.accountlist.append(newaccount)
+        else:
+            QMessageBox.about(self.ui, '错误', '注册失败，请稍后重试！')
 
     def cancel(self):
         print('取消注册新用户')

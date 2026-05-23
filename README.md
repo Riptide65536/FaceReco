@@ -1,38 +1,146 @@
-## Introduction
+# MultiCameraManagement-FacialRecognition
 
-This is an example program of a monitoring system that implements multi camera management, facial recognition, and facial input functions. And the monitoring and management system can achieve queries and management for specific times, locations, and personnel.
-这是一个实现了多摄像头管理以及人脸识别、人脸录入的功能的监控系统的示例程序。并且该监控管理系统可以实现针对特定时间、特定地点、特定人员的查询和管理。
+这是一个基于 PySide2 + OpenCV 的多摄像头人脸识别桌面系统。当前已包含登录/注册、摄像头显示、人脸录入、LBPH 训练、识别日志、考勤逻辑等基础能力，并逐步按 `prompt.md` 中的四层架构重构。
 
-## Technology Map
-python3.8
-opencv
-mysql8.0
-pyside2 or pyqt5
+## 环境要求
 
-## How to use
-first,  enter the project root directory, `virtualenv venv`, then cd venv/scripts ,`activate`, then `pip install -r requirements` , just so easy.
+推荐使用 Python 3.8-3.10。不要使用 Python 3.14 运行本项目，因为 PySide2 旧版本通常无法正常安装。
 
-We can add cameras through camera ID or streaming address, and configure the display information of the camera, such as display mode (including facial recognition mode, facial detection mode, traditional mode), camera location information or name, and so on. We can first input facial information, and then the system will have the facial features of this person. Of course, we can also delete a specific facial feature.
-我们可以通过摄像头id或者拉流地址添加摄像头，并可以配置摄像头的显示信息，例如：显示模式（包括人脸识别模式、人脸检测模式、传统模式）、摄像头的位置信息或者名称等等。我们可以首先录入人脸信息，然后系统将会有这个人的人脸特征。当然我们也可以删除某个特定的人脸特征。
+核心依赖：
 
-Finally, in the system log, we can search for specific individuals based on "facial features (corresponding person names)" and "location" or "time".
-最后，在系统日志中，我们可以根据“人脸特征（与之对应的人员姓名）”和“位置”或者“时间”来查找特定的人员。
+- PySide2
+- opencv-contrib-python
+- opencv-python
+- numpy
+- Pillow
+- PyMySQL
 
-## Demostrations
+## 安装与运行
 
-【本科毕设 OpenCV+PySide2+MySQL的人脸识别监控管理系统】 https://www.bilibili.com/video/BV1Ug4y1g7uj
-![2ca2c197e7c9ecc91caf6cf4bd7a6bf](https://github.com/inathanxu/MutiCameraManagement-FaceRecog/assets/62796940/b287e56b-bfbd-4cd5-ba47-7f4625d5b7ae)
-![c8947ab50bf4515e9379b185b63cb7f](https://github.com/inathanxu/MutiCameraManagement-FaceRecog/assets/62796940/a11de7af-da5d-4184-987e-7b723981b0bb)
-![5488f8496925a6807cefbf838684266](https://github.com/inathanxu/MutiCameraManagement-FaceRecog/assets/62796940/15b51e7f-f617-4e82-a008-d2b5df400c39)
+在项目根目录执行：
 
-## Help or About me 
-If you have any problem, just raise an issue :-D
-如果你有任何安装上的问题，欢迎通过这个email联系我，naixingxu@163.com，或者关注bilibili网站的up“inathanxu”进行私聊，远程协助安装将可能要求你请我喝杯咖啡  \\(@^_^@)/
+```powershell
+cd D:\Coding_programs\Projects\Facical_reco_base\MultiCameraManagement-FacialRecognition
+```
 
-## Some about SQL and database （关于数据库的一些补充）
+如果使用本机已有 Conda 环境，当前推荐环境是：
 
-Due to some reasons, the database files for the project were not provided to everyone. The database structure of this project is very simple. You can refer to the following pictures and write your own files. But remember to modify the file 'sqls.py'. 
-由于一些原因，项目的数据库文件并没有提供给大家。本项目的数据库结构很简单，大家可以参照下面的图片，自己编写文件。但是记得修改“sqls.py”文件。
-![1](https://github.com/inathanxu/MultiCameraManagement-FacialRecognition/assets/62796940/fed69146-8197-4756-b864-285421793057)
-![image](https://github.com/inathanxu/MultiCameraManagement-FacialRecognition/assets/62796940/38735b79-88ce-442a-9727-61c027f14b08)
+```text
+D:\Anaconda_envs\envs\FaceReco
+Python 3.8.20
+```
 
+在 PowerShell 中可以这样运行：
+
+```powershell
+conda activate D:\Anaconda_envs\envs\FaceReco
+python tools\doctor.py
+python run.py
+```
+
+也可以直接双击项目根目录下的：
+
+```text
+run_conda_facereco.bat
+```
+
+如果不用 Conda，也可以使用 Python 3.9 创建虚拟环境：
+
+```powershell
+C:\Python39\python.exe -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+如果 PowerShell 不允许激活虚拟环境，先执行：
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+```
+
+启动前自检：
+
+```powershell
+python tools\doctor.py
+```
+
+启动程序：
+
+```powershell
+python run.py
+```
+
+也可以直接运行旧入口：
+
+```powershell
+python main.py
+```
+
+## 登录账号
+
+默认管理员账号：
+
+```text
+账号：admin
+密码：admin
+```
+
+如果忘记密码或登录失败，可以重置管理员密码：
+
+```powershell
+python tools\doctor.py --reset-admin admin
+```
+
+然后重新使用：
+
+```text
+admin / admin
+```
+
+## 数据库说明
+
+系统优先连接 MySQL。默认连接信息：
+
+```text
+host=localhost
+port=3307
+user=root
+password=password
+database=db_bishe
+```
+
+可以通过环境变量覆盖：
+
+```powershell
+$env:FACE_DB_HOST="localhost"
+$env:FACE_DB_PORT="3307"
+$env:FACE_DB_USER="root"
+$env:FACE_DB_PASSWORD="password"
+$env:FACE_DB_NAME="db_bishe"
+```
+
+初始化 MySQL：
+
+```powershell
+mysql -u root -p < init_db.sql
+```
+
+如果 MySQL 无法连接，系统会自动降级到本地 SQLite，并创建 `facial_system.db`，这样登录、日志、测试仍然可以运行。
+
+## 测试
+
+```powershell
+python -m pytest tests -q
+```
+
+## 常见问题
+
+如果提示缺少 `PySide2` 或 `cv2`，通常是没有激活虚拟环境，或者 Python 版本太新。请确认：
+
+```powershell
+python --version
+python tools\doctor.py
+```
+
+如果当前是 Python 3.14，请改用 Python 3.9/3.10 创建虚拟环境。

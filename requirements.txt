@@ -10,6 +10,7 @@ Pillow==9.4.0
 pycparser==2.21
 PyMySQL==1.0.2
 PySide2==5.15.2.1
+pytest>=7.0
 requests==2.28.2
 shiboken2==5.15.2.1
 shutilwhich==1.1.0

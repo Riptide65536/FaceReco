@@ -7,7 +7,7 @@
 
 from PySide2.QtWidgets import QApplication, QMessageBox, QTableWidgetItem, QHeaderView
 from PySide2.QtUiTools import QUiLoader
-from PySide2.QtGui import QImage, QPixmap
+from PySide2.QtGui import QImage, QPixmap, QFont
 from PySide2.QtCore import Qt
 import numpy as np
 import cv2, threading, os, shutil
@@ -16,6 +16,19 @@ import ast
 import datetime
 from paths import asset_path, ui_path
 import sqls # sqls是自己写的模块
+
+DEFAULT_UI_FONT = QFont('Microsoft YaHei UI', 10)
+APP_STYLESHEET = """
+    QWidget { background: #f5f8fc; color: #213547; font-family: \"Microsoft YaHei UI\"; font-size: 10pt; }
+    QGroupBox { border: 1px solid #c7d5e8; border-radius: 10px; margin-top: 10px; background: #ffffff; }
+    QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 6px; color: #1c5d99; font-weight: 600; }
+    QLineEdit, QComboBox, QDateTimeEdit, QTableWidget {
+        border: 1px solid #b8c8dc; border-radius: 6px; padding: 4px 6px; background: #fbfdff;
+    }
+    QPushButton { border: 1px solid #8fb2d6; border-radius: 8px; padding: 6px 10px; background: #eaf3ff; font-weight: 600; }
+    QPushButton:hover { background: #d8eaff; }
+    QLabel#display1, QLabel#display2, QLabel#display3, QLabel#display4 { border: 1px solid #c9d7e8; border-radius: 8px; background: #f8fbff; }
+"""
 
 systemLock = 0
 totalUser = 0
@@ -36,6 +49,8 @@ class MWindow():
 
     def __init__(self):
         self.mui = QUiLoader().load(ui_path('MUi.ui'))
+        self.mui.setFont(DEFAULT_UI_FONT)
+        self.mui.setStyleSheet(APP_STYLESHEET)
         self.mui.setFixedSize(self.mui.width(), self.mui.height())
         self.mui.pushButton1.clicked.connect(self.start)
         self.mui.pushButton2.clicked.connect(self.close)
@@ -475,6 +490,8 @@ class AddWindow():
 
     def __init__(self):
         self.ui = QUiLoader().load(ui_path('Add.ui'))
+        self.ui.setFont(DEFAULT_UI_FONT)
+        self.ui.setStyleSheet(APP_STYLESHEET)
         self.ui.setFixedSize(self.ui.width(), self.ui.height())
         self.ui.buttonBox.accepted.connect(self.ok)
         self.ui.buttonBox.rejected.connect(self.cancel)
@@ -686,6 +703,8 @@ class AddWindow():
 class DelWindow():
     def __init__(self):
         self.ui = QUiLoader().load(ui_path('Del.ui'))
+        self.ui.setFont(DEFAULT_UI_FONT)
+        self.ui.setStyleSheet(APP_STYLESHEET)
         self.ui.setFixedSize(self.ui.width(), self.ui.height())
         self.ui.buttonBox.accepted.connect(self.ok)
         self.ui.buttonBox.rejected.connect(self.cancel)
@@ -718,6 +737,8 @@ class DelFaceWindow():
 
     def __init__(self):
         self.ui = QUiLoader().load(ui_path('DelFace.ui'))
+        self.ui.setFont(DEFAULT_UI_FONT)
+        self.ui.setStyleSheet(APP_STYLESHEET)
         self.ui.buttonBox.accepted.connect(self.ok)
         self.ui.buttonBox.rejected.connect(self.cancel)
         for i in range(1, totalUser+1):
@@ -841,6 +862,8 @@ class LuruWindow():
     def __init__(self):
         global systemLock
         self.ui = QUiLoader().load(ui_path('Luru.ui'))
+        self.ui.setFont(DEFAULT_UI_FONT)
+        self.ui.setStyleSheet(APP_STYLESHEET)
         self.ui.setFixedSize(self.ui.width(), self.ui.height())
 
         self.ui.lurudisplay2.setPixmap(QPixmap(asset_path('avatar.png')))
@@ -1163,6 +1186,8 @@ class ResetWindow():
 
     def __init__(self):
         self.ui = QUiLoader().load(ui_path('ResetQ.ui'))
+        self.ui.setFont(DEFAULT_UI_FONT)
+        self.ui.setStyleSheet(APP_STYLESHEET)
         self.ui.setFixedSize(self.ui.width(), self.ui.height())
         self.ui.buttonBox.accepted.connect(self.yes)
         self.ui.buttonBox.accepted.connect(self.no)
@@ -1204,6 +1229,8 @@ class ResetWindow():
 class LogWindow():
     def __init__(self):
         self.ui = QUiLoader().load(ui_path('Log.ui'))
+        self.ui.setFont(DEFAULT_UI_FONT)
+        self.ui.setStyleSheet(APP_STYLESHEET)
         self.ui.setFixedSize(self.ui.width(), self.ui.height())
         self.ui.tableWidget.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.ui.pushButton.clicked.connect(self.inquiryDB)
@@ -1507,6 +1534,8 @@ class Camera:
 class LogInWindow():
     def __init__(self):
         self.ui = QUiLoader().load(ui_path('LogIn.ui'))
+        self.ui.setFont(DEFAULT_UI_FONT)
+        self.ui.setStyleSheet(APP_STYLESHEET)
         self.ui.setFixedSize(self.ui.width(), self.ui.height())
         self.ui.label.setPixmap(QPixmap(asset_path('welcome.png')))
         self.ui.pushButton1.clicked.connect(self.loginfunction)
@@ -1548,6 +1577,8 @@ class LogInWindow():
 class RegisterWindow():
     def __init__(self):
         self.ui = QUiLoader().load(ui_path('Register.ui'))
+        self.ui.setFont(DEFAULT_UI_FONT)
+        self.ui.setStyleSheet(APP_STYLESHEET)
         self.ui.buttonBox.accepted.connect(self.ok)
         self.ui.buttonBox.rejected.connect(self.cancel)
         self.sqlofregister = sqls.SqlF()
@@ -1581,6 +1612,7 @@ class RegisterWindow():
 
 
 app = QApplication([])
+app.setFont(DEFAULT_UI_FONT)
 start_login = LogInWindow()
 start_login.ui.show()
 app.exec_()

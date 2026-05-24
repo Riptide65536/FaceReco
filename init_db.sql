@@ -18,6 +18,17 @@ CREATE TABLE IF NOT EXISTS recognition_logs (
     image_path VARCHAR(255)
 );
 
+CREATE TABLE IF NOT EXISTS attendance_records (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    name VARCHAR(100) NOT NULL,
+    clock_time DATETIME NOT NULL,
+    attendance_type VARCHAR(20) NOT NULL,
+    status VARCHAR(20) NOT NULL,
+    location VARCHAR(100),
+    emotion VARCHAR(20),
+    image_path VARCHAR(255)
+);
+
 CREATE TABLE IF NOT EXISTS face_features (
     id INT PRIMARY KEY AUTO_INCREMENT,
     name VARCHAR(100),

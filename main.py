@@ -5,7 +5,7 @@
 可以全彩色显示
 '''
 
-from PySide2.QtWidgets import QApplication, QMessageBox, QTableWidgetItem, QHeaderView
+from PySide2.QtWidgets import QApplication, QMessageBox, QTableWidgetItem, QHeaderView, QLabel, QComboBox, QPushButton
 from PySide2.QtUiTools import QUiLoader
 from PySide2.QtGui import QImage, QPixmap, QFont
 from PySide2.QtCore import Qt, QObject, Signal
@@ -1230,8 +1230,9 @@ class LogWindow():
         self.ui.setStyleSheet(APP_STYLESHEET)
         self.ui.setFixedSize(self.ui.width(), self.ui.height())
         self.ui.tableWidget.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.ui.tableWidget.setColumnCount(4)
-        self.ui.tableWidget.setHorizontalHeaderLabels(['姓名', '地点', '时间', '情绪'])
+        self.ui.tableWidget.setColumnCount(6)
+        self.ui.tableWidget.setHorizontalHeaderLabels(['姓名', '地点', '时间', '情绪', '考勤类型', '状态'])
+        self._install_extra_filters()
         self.ui.pushButton.clicked.connect(self.inquiryDB)
         self.ui.pushButton2.clicked.connect(self.clearDB)
 
@@ -1255,6 +1256,8 @@ class LogWindow():
         # print('allplace', allplace)
         for i in allplace:
             self.ui.comboBox.addItem(i[0])
+        self.comboAttendanceType.addItems(['任何类型', '上班打卡', '下班打卡', '外出登记', '重复识别', '未识别'])
+        self.comboStatus.addItems(['任何状态', '正常', '迟到', '早退', '缺勤', '已记录', '异常'])
 
         default_start = nowdatetime - datetime.timedelta(days=30)
         default_end = nowdatetime
@@ -1263,6 +1266,8 @@ class LogWindow():
             location=None,
             start_time=default_start,
             end_time=default_end,
+            attendance_type=None,
+            status=None,
         )
         self._fill_table(results)
 
@@ -1278,10 +1283,63 @@ class LogWindow():
             row_count = self.ui.tableWidget.rowCount()
             self.ui.tableWidget.insertRow(row_count)
             values = list(row)
-            if len(values) < 4:
-                values.extend([''] * (4 - len(values)))
-            for col in range(4):
+            if len(values) < 6:
+                values.extend([''] * (6 - len(values)))
+            for col in range(6):
                 self.ui.tableWidget.setItem(row_count, col, QTableWidgetItem(str(values[col] if values[col] is not None else '')))
+
+    def _install_extra_filters(self):
+        grid = self.ui.layoutWidget.layout()
+        self.labelAttendanceType = QLabel('考勤类型：', self.ui.layoutWidget)
+        self.labelAttendanceType.setFont(DEFAULT_UI_FONT)
+        self.comboAttendanceType = QComboBox(self.ui.layoutWidget)
+        self.comboAttendanceType.setFont(DEFAULT_UI_FONT)
+        self.labelStatus = QLabel('状态：', self.ui.layoutWidget)
+        self.labelStatus.setFont(DEFAULT_UI_FONT)
+        self.comboStatus = QComboBox(self.ui.layoutWidget)
+        self.comboStatus.setFont(DEFAULT_UI_FONT)
+        self.btnAbsence = QPushButton('当日缺勤', self.ui.layoutWidget)
+        self.btnAbsence.setFont(DEFAULT_UI_FONT)
+        self.btnSummary = QPushButton('考勤汇总', self.ui.layoutWidget)
+        self.btnSummary.setFont(DEFAULT_UI_FONT)
+        self.btnAbsence.clicked.connect(self.showAbsenceList)
+        self.btnSummary.clicked.connect(self.showAttendanceSummary)
+        # Place to the right side of existing filters, no .ui redesign required.
+        grid.addWidget(self.labelAttendanceType, 1, 8)
+        grid.addWidget(self.comboAttendanceType, 2, 8)
+        grid.addWidget(self.labelStatus, 1, 9)
+        grid.addWidget(self.comboStatus, 2, 9)
+        grid.addWidget(self.btnAbsence, 1, 10)
+        grid.addWidget(self.btnSummary, 2, 10)
+
+    def showAbsenceList(self):
+        target_day = self.ui.dateTimeEdit1.dateTime().toString("yyyy-MM-dd")
+        day = datetime.datetime.strptime(target_day, '%Y-%m-%d').date()
+        expected_names = sorted(list(set(userdic.values())))
+        if not expected_names:
+            QMessageBox.about(self.ui, '缺勤名单', '当前没有已登记的人脸用户。')
+            return
+        absences = self.sqlofLog.getAbsenceList(expected_names, day=day)
+        if not absences:
+            text = f'{target_day} 无缺勤人员。'
+        else:
+            text = f'{target_day} 缺勤人员：\n' + '\n'.join(absences)
+        QMessageBox.about(self.ui, '缺勤名单', text)
+
+    def showAttendanceSummary(self):
+        starttime = self.ui.dateTimeEdit1.dateTime().toString("yyyy-MM-dd hh:mm:ss")
+        endtime = self.ui.dateTimeEdit2.dateTime().toString("yyyy-MM-dd hh:mm:ss")
+        start_dt = datetime.datetime.strptime(starttime, '%Y-%m-%d %H:%M:%S')
+        end_dt = datetime.datetime.strptime(endtime, '%Y-%m-%d %H:%M:%S')
+        summary = self.sqlofLog.getAttendanceSummary(start_dt, end_dt)
+        if not summary:
+            QMessageBox.about(self.ui, '考勤汇总', '当前时间范围内没有记录。')
+            return
+        lines = []
+        for name, stat_map in summary.items():
+            pairs = [f'{k}:{v}' for k, v in stat_map.items()]
+            lines.append(f'{name} -> ' + ' / '.join(pairs))
+        QMessageBox.about(self.ui, '考勤汇总', '\n'.join(lines))
 
     def inquiryDB(self):
         print('日志窗口的查询按钮已经按下')
@@ -1301,6 +1359,8 @@ class LogWindow():
             location=place,
             start_time=starttime,
             end_time=endtime,
+            attendance_type=self.comboAttendanceType.currentText(),
+            status=self.comboStatus.currentText(),
         )
         self._fill_table(results)
 
@@ -1397,6 +1457,7 @@ class Camera:
                 if not self._running:
                     break
                 if success:
+                    frame_people = []
                     rawframe = cv2.resize(frame, (640, 360))
                     # cv2.imshow('raw', frame)
                     frame = cv2.cvtColor(rawframe, cv2.COLOR_BGR2GRAY)
@@ -1454,6 +1515,7 @@ class Camera:
                                     font_scale=1,
                                     thickness=2,
                                 )
+                                frame_people.append(f'{name}({emotion_text})')
                                 # 人脸计数代码区--------
                                 faceList.append((name, emotion_text))
                                 if (name, emotion_text) not in tempfaceList:
@@ -1471,6 +1533,25 @@ class Camera:
                                     font_scale=1,
                                     thickness=2,
                                 )
+
+                    if frame_people:
+                        unique_people = []
+                        seen = set()
+                        for item in frame_people:
+                            if item not in seen:
+                                unique_people.append(item)
+                                seen.add(item)
+                        summary_text = '当前帧识别: ' + ', '.join(unique_people[:3])
+                        if len(unique_people) > 3:
+                            summary_text += f' ... 共{len(unique_people)}人'
+                        rawframe = self._draw_text(
+                            rawframe,
+                            summary_text,
+                            (7, 45),
+                            color=(0, 0, 255),
+                            font_scale=0.6,
+                            thickness=2,
+                        )
 
                     rawframe = cv2.cvtColor(rawframe,cv2.COLOR_BGR2RGB)
                     if not self._running:

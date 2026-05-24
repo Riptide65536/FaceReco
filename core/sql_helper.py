@@ -81,6 +81,18 @@ class SqlF:
                 )
                 """,
                 """
+                CREATE TABLE IF NOT EXISTS attendance_records (
+                    id INT PRIMARY KEY AUTO_INCREMENT,
+                    name VARCHAR(100) NOT NULL,
+                    clock_time DATETIME NOT NULL,
+                    attendance_type VARCHAR(20) NOT NULL,
+                    status VARCHAR(20) NOT NULL,
+                    location VARCHAR(100),
+                    emotion VARCHAR(20),
+                    image_path VARCHAR(255)
+                )
+                """,
+                """
                 CREATE TABLE IF NOT EXISTS face_features (
                     id INT PRIMARY KEY AUTO_INCREMENT,
                     name VARCHAR(100),
@@ -107,6 +119,18 @@ class SqlF:
                     emotion TEXT,
                     attendance_type TEXT,
                     status TEXT,
+                    image_path TEXT
+                )
+                """,
+                """
+                CREATE TABLE IF NOT EXISTS attendance_records (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    clock_time TEXT NOT NULL,
+                    attendance_type TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    location TEXT,
+                    emotion TEXT,
                     image_path TEXT
                 )
                 """,
@@ -188,6 +212,23 @@ class SqlF:
                     image_path,
                 ),
             )
+            # Keep a dedicated attendance table in sync for reporting.
+            self.cursor.execute(
+                f"""
+                INSERT INTO attendance_records
+                    (name, clock_time, attendance_type, status, location, emotion, image_path)
+                VALUES ({self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param})
+                """,
+                (
+                    name,
+                    self._format_datetime(timestamp),
+                    attendance_type,
+                    attendance.status,
+                    location,
+                    emotion,
+                    image_path,
+                ),
+            )
             self.db.commit()
             return True
         except Exception as exc:
@@ -198,6 +239,7 @@ class SqlF:
     def resetDB(self) -> bool:
         try:
             self.cursor.execute("DELETE FROM recognition_logs")
+            self.cursor.execute("DELETE FROM attendance_records")
             self.db.commit()
             return True
         except Exception:
@@ -247,6 +289,8 @@ class SqlF:
         location: Optional[str] = None,
         start_time: Optional[_dt.datetime] = None,
         end_time: Optional[_dt.datetime] = None,
+        attendance_type: Optional[str] = None,
+        status: Optional[str] = None,
     ) -> list[tuple[Any, Any, Any, Any]]:
         clauses = []
         params: list[Any] = []
@@ -256,12 +300,20 @@ class SqlF:
         if location and location != "任何地点":
             clauses.append(f"location = {self.param}")
             params.append(location)
+        if attendance_type and attendance_type != "任何类型":
+            clauses.append(f"attendance_type = {self.param}")
+            params.append(attendance_type)
+        if status and status != "任何状态":
+            clauses.append(f"status = {self.param}")
+            params.append(status)
         if start_time and end_time:
             clauses.append(f"timestamp BETWEEN {self.param} AND {self.param}")
             params.extend([self._format_datetime(start_time), self._format_datetime(end_time)])
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
         self.cursor.execute(
-            "SELECT name, location, timestamp, emotion FROM recognition_logs" + where + " ORDER BY timestamp DESC",
+            "SELECT name, location, timestamp, emotion, attendance_type, status FROM recognition_logs"
+            + where
+            + " ORDER BY timestamp DESC",
             tuple(params),
         )
         return self.cursor.fetchall()
@@ -308,6 +360,95 @@ class SqlF:
             }
             for row in rows
         ]
+
+    def saveAttendanceRecord(
+        self,
+        name: str,
+        clock_time: Any,
+        attendance_type: str,
+        status: str,
+        location: Optional[str] = None,
+        emotion: Optional[str] = None,
+        image_path: Optional[str] = None,
+    ) -> bool:
+        try:
+            self.cursor.execute(
+                f"""
+                INSERT INTO attendance_records
+                    (name, clock_time, attendance_type, status, location, emotion, image_path)
+                VALUES ({self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param}, {self.param})
+                """,
+                (
+                    name,
+                    self._format_datetime(self._coerce_datetime(clock_time)),
+                    attendance_type,
+                    status,
+                    location,
+                    emotion,
+                    image_path,
+                ),
+            )
+            self.db.commit()
+            return True
+        except Exception:
+            self.db.rollback()
+            return False
+
+    def queryAttendanceByUser(
+        self,
+        name: str,
+        start_time: Optional[Any] = None,
+        end_time: Optional[Any] = None,
+    ) -> list[dict[str, Any]]:
+        clauses = [f"name = {self.param}"]
+        params: list[Any] = [name]
+        if start_time and end_time:
+            clauses.append(f"clock_time BETWEEN {self.param} AND {self.param}")
+            params.extend([
+                self._format_datetime(self._coerce_datetime(start_time)),
+                self._format_datetime(self._coerce_datetime(end_time)),
+            ])
+        where = " WHERE " + " AND ".join(clauses)
+        self.cursor.execute(
+            "SELECT name, clock_time, attendance_type, status, location, emotion, image_path FROM attendance_records"
+            + where
+            + " ORDER BY clock_time ASC",
+            tuple(params),
+        )
+        rows = self.cursor.fetchall()
+        return [
+            {
+                "name": row[0],
+                "clock_time": self._coerce_datetime(row[1]),
+                "attendance_type": row[2],
+                "status": row[3],
+                "location": row[4],
+                "emotion": row[5],
+                "image_path": row[6],
+            }
+            for row in rows
+        ]
+
+    def getAbsenceList(
+        self,
+        expected_names: list[str],
+        day: Optional[Any] = None,
+    ) -> list[str]:
+        """Return names that do not have a valid morning check-in on the given day."""
+        target_day = self._coerce_datetime(day).date() if day is not None else _dt.date.today()
+        start = _dt.datetime.combine(target_day, _dt.time.min)
+        end = _dt.datetime.combine(target_day, _dt.time.max)
+        logs = self.getAttendanceReport(start, end)
+        return self.attendance.detect_absence(expected_names, logs, day=target_day)
+
+    def getAttendanceSummary(
+        self,
+        start_date: Any,
+        end_date: Any,
+    ) -> dict[str, dict[str, int]]:
+        """Aggregate attendance/recognition statuses by person for report pages."""
+        logs = self.getAttendanceReport(start_date, end_date)
+        return self.attendance.summary_by_person(logs)
 
     def dbclose(self) -> None:
         if self.db is not None:

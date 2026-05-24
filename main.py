@@ -1,4 +1,4 @@
-'''
+﻿'''
 逻辑无问题 数据库可以正常搜索 集成摄像头重启后以及训练模型后
 所有摄像头的重启后 其名称地址都能表示正确 可以设置摄像头使用哪种显示类型
 并且可以对指定的用户进行删除操作
@@ -8,7 +8,7 @@
 from PySide2.QtWidgets import QApplication, QMessageBox, QTableWidgetItem, QHeaderView
 from PySide2.QtUiTools import QUiLoader
 from PySide2.QtGui import QImage, QPixmap, QFont
-from PySide2.QtCore import Qt
+from PySide2.QtCore import Qt, QObject, Signal
 import numpy as np
 import cv2, threading, os, shutil
 from PIL import Image
@@ -36,6 +36,15 @@ faceSamples = []
 idlists = []
 userdic = {}
 
+
+class _LabelBridge(QObject):
+    pixmap_ready = Signal(QPixmap)
+
+    def __init__(self, label):
+        super().__init__()
+        self._label = label
+        self.pixmap_ready.connect(self._label.setPixmap, Qt.QueuedConnection)
+
 def _resolve_user_data_dir(user_id, username):
     id_dir = os.path.join('data', str(user_id))
     name_dir = os.path.join('data', str(username))
@@ -48,10 +57,12 @@ def _resolve_user_data_dir(user_id, username):
 class MWindow():
 
     def __init__(self):
+        self._closing = False
         self.mui = QUiLoader().load(ui_path('MUi.ui'))
         self.mui.setFont(DEFAULT_UI_FONT)
         self.mui.setStyleSheet(APP_STYLESHEET)
         self.mui.setFixedSize(self.mui.width(), self.mui.height())
+        self.mui.closeEvent = self._on_close_event
         self.mui.pushButton1.clicked.connect(self.start)
         self.mui.pushButton2.clicked.connect(self.close)
         self.mui.addButton.clicked.connect(self.addcam)
@@ -231,6 +242,13 @@ class MWindow():
 
         ######### ↑↑↑以上代码为显示初始化过程 ########
 
+    def _on_close_event(self, event):
+        self._closing = True
+        try:
+            self.close()
+        finally:
+            event.accept()
+
     def saveconfig(self):  # 保存显示配置文件的函数
         f = open('config/configwin1.txt', 'w')
         nameAndLocation = self.mui.lineEdit11.text()
@@ -292,7 +310,7 @@ class MWindow():
             QMessageBox.about(self.mui, '错误', '窗口1忙碌，不可以添加视频流')
         else:
             self.cam1 = Camera('1 Danny MacAskill’s Wee Day Out.flv', self.mui.display1)
-            threading.Thread(target=self.cam1.display).start()
+            threading.Thread(target=self.cam1.display, daemon=True).start()
             if self.cam1.cap.isOpened():
                 self.busy1 = True
 
@@ -300,7 +318,7 @@ class MWindow():
             QMessageBox.about(self.mui, '错误', '窗口2忙碌，不可以添加视频流')
         else:
             self.cam2 = Camera('1 Danny MacAskill’s Wee Day Out.flv', self.mui.display2)
-            threading.Thread(target=self.cam2.display).start()
+            threading.Thread(target=self.cam2.display, daemon=True).start()
             if self.cam2.cap.isOpened():
                 self.busy2 = True
 
@@ -308,7 +326,7 @@ class MWindow():
             QMessageBox.about(self.mui, '错误', '窗口3忙碌，不可以添加视频流')
         else:
             self.cam3 = Camera('1 Danny MacAskill’s Wee Day Out.flv', self.mui.display3)
-            threading.Thread(target=self.cam3.display).start()
+            threading.Thread(target=self.cam3.display, daemon=True).start()
             if self.cam3.cap.isOpened():
                 self.busy3 = True
 
@@ -316,7 +334,7 @@ class MWindow():
             QMessageBox.about(self.mui, '错误', '窗口4忙碌，不可以添加视频流')
         else:
             self.cam4 = Camera('1 Danny MacAskill’s Wee Day Out.flv', self.mui.display4)
-            threading.Thread(target=self.cam4.display).start()
+            threading.Thread(target=self.cam4.display, daemon=True).start()
             if self.cam4.cap.isOpened():
                 self.busy4 = True
 
@@ -334,11 +352,11 @@ class MWindow():
             if cameraNamePlace != '':
                 self.cam1.nameAndLocation = cameraNamePlace
             if displaymode == 0:
-                threading.Thread(target=self.cam1.display).start()
+                threading.Thread(target=self.cam1.display, daemon=True).start()
             elif displaymode == 1:
-                threading.Thread(target=self.cam1.displaySimpleBrand).start()
+                threading.Thread(target=self.cam1.displaySimpleBrand, daemon=True).start()
             elif displaymode == 2:
-                threading.Thread(target=self.cam1.displayJustdisplayBrand).start()
+                threading.Thread(target=self.cam1.displayJustdisplayBrand, daemon=True).start()
             if self.cam1.cap.isOpened():
                 self.busy1 = True
                 self.cameraList.append(url)
@@ -357,11 +375,11 @@ class MWindow():
             if cameraNamePlace != '':
                 self.cam2.nameAndLocation = cameraNamePlace
             if displaymode == 0:
-                threading.Thread(target=self.cam2.display).start()
+                threading.Thread(target=self.cam2.display, daemon=True).start()
             elif displaymode == 1:
-                threading.Thread(target=self.cam2.displaySimpleBrand).start()
+                threading.Thread(target=self.cam2.displaySimpleBrand, daemon=True).start()
             elif displaymode == 2:
-                threading.Thread(target=self.cam2.displayJustdisplayBrand).start()
+                threading.Thread(target=self.cam2.displayJustdisplayBrand, daemon=True).start()
             if self.cam2.cap.isOpened():
                 self.busy2 = True
                 self.cameraList.append(url)
@@ -380,11 +398,11 @@ class MWindow():
             if cameraNamePlace != '':
                 self.cam3.nameAndLocation = cameraNamePlace
             if displaymode == 0:
-                threading.Thread(target=self.cam3.display).start()
+                threading.Thread(target=self.cam3.display, daemon=True).start()
             elif displaymode == 1:
-                threading.Thread(target=self.cam3.displaySimpleBrand).start()
+                threading.Thread(target=self.cam3.displaySimpleBrand, daemon=True).start()
             elif displaymode == 2:
-                threading.Thread(target=self.cam3.displayJustdisplayBrand).start()
+                threading.Thread(target=self.cam3.displayJustdisplayBrand, daemon=True).start()
             if self.cam3.cap.isOpened():
                 self.busy3 = True
                 self.cameraList.append(url)
@@ -403,44 +421,32 @@ class MWindow():
             if cameraNamePlace != '':
                 self.cam4.nameAndLocation = cameraNamePlace
             if displaymode == 0:
-                threading.Thread(target=self.cam4.display).start()
+                threading.Thread(target=self.cam4.display, daemon=True).start()
             if displaymode == 1:
-                threading.Thread(target=self.cam4.displaySimpleBrand).start()
+                threading.Thread(target=self.cam4.displaySimpleBrand, daemon=True).start()
             if displaymode == 2:
-                threading.Thread(target=self.cam4.displayJustdisplayBrand).start()
+                threading.Thread(target=self.cam4.displayJustdisplayBrand, daemon=True).start()
             if self.cam4.cap.isOpened():
                 self.busy4 = True
                 self.cameraList.append(url)
 
     def close(self):
-        if self.busy1 == True:
-            if self.cam1.url in self.cameraList:
-                self.cameraList.remove(self.cam1.url)
-            self.mui.display1.setPixmap(QPixmap(asset_path('nosignal.png')))
-            self.cam1.close()
-            print('1close')
-            self.busy1 = False
-        if self.busy2 == True:
-            if self.cam2.url in self.cameraList:
-                self.cameraList.remove(self.cam2.url)
-            self.mui.display2.setPixmap(QPixmap(asset_path('nosignal.png')))
-            self.cam2.close()
-            print('2close')
-            self.busy2 = False
-        if self.busy3 == True:
-            if self.cam3.url in self.cameraList:
-                self.cameraList.remove(self.cam3.url)
-            self.mui.display3.setPixmap(QPixmap(asset_path('nosignal.png')))
-            self.cam3.close()
-            print('3close')
-            self.busy3 = False
-        if self.busy4 == True:
-            if self.cam4.url in self.cameraList:
-                self.cameraList.remove(self.cam4.url)
-            self.mui.display4.setPixmap(QPixmap(asset_path('nosignal.png')))
-            self.cam4.close()
-            print('4close')
-            self.busy4 = False
+        slots = [
+            ('busy1', 'cam1', self.mui.display1, '1close'),
+            ('busy2', 'cam2', self.mui.display2, '2close'),
+            ('busy3', 'cam3', self.mui.display3, '3close'),
+            ('busy4', 'cam4', self.mui.display4, '4close'),
+        ]
+        for busy_attr, cam_attr, label, msg in slots:
+            if getattr(self, busy_attr, False):
+                cam = getattr(self, cam_attr, None)
+                if cam is not None:
+                    if cam.url in self.cameraList:
+                        self.cameraList.remove(cam.url)
+                    cam.close()
+                label.setPixmap(QPixmap(asset_path('nosignal.png')))
+                print(msg)
+                setattr(self, busy_attr, False)
 
     def close1(self):
         if self.busy1 == True:
@@ -877,6 +883,7 @@ class LuruWindow():
 
         self.integratedNamePlace = '' # 记录集成摄像头的名称和地点 以便于后续重启的设置
         self.integratedDisplaymode = 0 # 记录集成摄像头的显示模式
+        self._restore_done = False
 
         if systemLock != 0:
             QMessageBox.about(self.ui, '警告', '集成相机被占用，即将解锁，监控将暂时中断，人脸录入结束后可自行恢复')
@@ -886,7 +893,7 @@ class LuruWindow():
                 mainwindow.close1()
                 systemLock = 1
                 self.lurucam = Camera(0, self.ui.lurudisplay)
-                self.luruThread = threading.Thread(target=self.lurucam.displayLuruBrand)
+                self.luruThread = threading.Thread(target=self.lurucam.displayLuruBrand, daemon=True)
                 # self.luruThread.setDaemon(True)
                 self.luruThread.start()
             elif systemLock == 2:
@@ -895,7 +902,7 @@ class LuruWindow():
                 mainwindow.close2()
                 systemLock = 2
                 self.lurucam = Camera(0, self.ui.lurudisplay)
-                self.luruThread = threading.Thread(target=self.lurucam.displayLuruBrand)
+                self.luruThread = threading.Thread(target=self.lurucam.displayLuruBrand, daemon=True)
                 # self.luruThread.setDaemon(True)
                 self.luruThread.start()
             elif systemLock == 3:
@@ -904,7 +911,7 @@ class LuruWindow():
                 mainwindow.close3()
                 systemLock = 3
                 self.lurucam = Camera(0, self.ui.lurudisplay)
-                self.luruThread = threading.Thread(target=self.lurucam.displayLuruBrand)
+                self.luruThread = threading.Thread(target=self.lurucam.displayLuruBrand, daemon=True)
                 # self.luruThread.setDaemon(True)
                 self.luruThread.start()
             elif systemLock == 4:
@@ -913,14 +920,14 @@ class LuruWindow():
                 mainwindow.close4()
                 systemLock = 4
                 self.lurucam = Camera(0, self.ui.lurudisplay)
-                self.luruThread = threading.Thread(target=self.lurucam.displayLuruBrand)
+                self.luruThread = threading.Thread(target=self.lurucam.displayLuruBrand, daemon=True)
                 # self.luruThread.setDaemon(True)
                 self.luruThread.start()
 
         if systemLock == 0:
             systemLock = 55
             self.lurucam = Camera(0, self.ui.lurudisplay)
-            self.luruThread = threading.Thread(target=self.lurucam.displayLuruBrand)
+            self.luruThread = threading.Thread(target=self.lurucam.displayLuruBrand, daemon=True)
             # self.luruThread.setDaemon(True)
             self.luruThread.start()
 
@@ -1084,9 +1091,18 @@ class LuruWindow():
                 mainwindow.start4(remeurl4, remeplace4, rememode4)
 
     def closeQuit(self):
-        global systemLock
-        self.lurucam.cap.release()
+        if hasattr(self, 'lurucam') and self.lurucam is not None:
+            self.lurucam.close()
+        if hasattr(self, 'lurucamReal') and self.lurucamReal is not None:
+            self.lurucamReal.close()
+        self._restore_integrated_camera()
         self.ui.close()
+
+    def _restore_integrated_camera(self):
+        global systemLock
+        if self._restore_done:
+            return
+        self._restore_done = True
         if systemLock == 1 and mainwindow.busy1 == False:
             mainwindow.start1(0, self.integratedNamePlace, self.integratedDisplaymode)
         elif systemLock == 2 and mainwindow.busy2 == False:
@@ -1107,62 +1123,42 @@ class LuruWindow():
         self.ui.lurudisplay.setPixmap(QPixmap(asset_path('nosignal.png')))
 
         self.lurucamReal = Camera(0, self.ui.lurudisplay)
-        self.luruThreadReal = threading.Thread(target=self.getNewFaceDisplay)
+        self.luruThreadReal = threading.Thread(target=self.getNewFaceDisplay, daemon=True)
         self.luruThreadReal.start()
 
     def getNewFaceDisplay(self):
-        global systemLock
-
         print('人脸捕捉新线程已经开启' * 5)
-        while self.lurucamReal.cap.isOpened():
-            while True:
-                success, frame = self.lurucamReal.cap.read()
-                if success and self.sampleNum < self.maxSampleNum:
-                    rawframe = cv2.resize(frame, (640, 360))
-                    # cv2.imshow('raw', frame)
-                    frame = cv2.cvtColor(rawframe, cv2.COLOR_BGR2GRAY)
-                    # cv2.imshow('raw2', frame)
-                    self.faces = self.lurucamReal.detector.detectMultiScale(frame, 1.3, 5)
-                    # 其中gray为要检测的灰度图像，1.3为每次图像尺寸减小的比例，5为minNeighbors
+        while (
+            hasattr(self, 'lurucamReal')
+            and self.lurucamReal._running
+            and self.lurucamReal.cap.isOpened()
+            and self.sampleNum < self.maxSampleNum
+        ):
+            success, frame = self.lurucamReal.cap.read()
+            if not success:
+                break
 
-                    # 框选人脸，for循环保证一个能检测的实时动态视频流
-                    for (x, y, w, h) in self.faces:
-                        # xy为左上角的坐标,w为宽，h为高，用rectangle为人脸标记画框
-                        cv2.rectangle(rawframe, (x, y), (x + w, y + h), (0, 0, 255), thickness=2)
-                        cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), thickness=2)
-                        self.sampleNum = self.sampleNum + 1
-                        cv2.imwrite('data' + '/' + self.filepath + '/' + str(self.sampleNum) + '.jpg', frame)
-                        # 上面保存的一定还得是frame（即灰度图像的图片 否则faceSamples初始化加载时会出错）
+            rawframe = cv2.resize(frame, (640, 360))
+            frame = cv2.cvtColor(rawframe, cv2.COLOR_BGR2GRAY)
+            self.faces = self.lurucamReal.detector.detectMultiScale(frame, 1.3, 5)
 
-                    rawframe = cv2.cvtColor(rawframe, cv2.COLOR_BGR2RGB)
-                    img = QImage(rawframe.data, rawframe.shape[1],
-                                 rawframe.shape[0], rawframe.shape[1]*3, QImage.Format_RGB888)
-
-                    # print(self.lurucamReal.outLabel)
-                    '''
-                    循环输出self.outLabel对象，其目的是前期调试使用
-                    '''
-                    self.lurucamReal.outLabel.setPixmap(QPixmap.fromImage(img))
-                    cv2.waitKey(10)
-                else:
-                    self.lurucamReal.cap.release()
-                    print('lurucamReal  XXXXXXXXXXX released!' * 5)
-                    self.sampleNum = 0
-
-                    self.ui.lurudisplay.setPixmap(QPixmap(asset_path('nosignal.png')))
-                    if systemLock == 1:
-                        mainwindow.start1(0, self.integratedNamePlace, self.integratedDisplaymode)
-                    elif systemLock == 2:
-                        mainwindow.start2(0, self.integratedNamePlace, self.integratedDisplaymode)
-                    elif systemLock == 3:
-                        mainwindow.start3(0, self.integratedNamePlace, self.integratedDisplaymode)
-                    elif systemLock == 4:
-                        mainwindow.start4(0, self.integratedNamePlace, self.integratedDisplaymode)
-                    elif systemLock == 55:
-                        systemLock = 0
-                    print("snap按下后应释放系统锁 不再有lurudisplay\n", 'systemlock:', systemLock)
-
+            for (x, y, w, h) in self.faces:
+                if self.sampleNum >= self.maxSampleNum:
                     break
+                cv2.rectangle(rawframe, (x, y), (x + w, y + h), (0, 0, 255), thickness=2)
+                cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), thickness=2)
+                self.sampleNum += 1
+                cv2.imwrite('data' + '/' + self.filepath + '/' + str(self.sampleNum) + '.jpg', frame)
+
+            rawframe = cv2.cvtColor(rawframe, cv2.COLOR_BGR2RGB)
+            self.lurucamReal._emit_frame(rawframe)
+            cv2.waitKey(10)
+
+        if hasattr(self, 'lurucamReal') and self.lurucamReal is not None:
+            self.lurucamReal.close()
+            self.lurucamReal._emit_no_signal()
+        self.sampleNum = 0
+        self._restore_integrated_camera()
 
     def snap(self):
         global systemLock
@@ -1332,9 +1328,24 @@ class Camera:
         self.displayMode = 0 # 记录摄像头的显示模式
         self.url = url
         self.outLabel = outLabel
+        self._bridge = _LabelBridge(outLabel)
+        self._running = True
         self.cap = cv2.VideoCapture(self.url)
         self.detector = cv2.CascadeClassifier(asset_path('haarcascade_frontalface_default.xml'))
         self.recognizer = cv2.face.LBPHFaceRecognizer_create()
+
+    def _emit_frame(self, rgb_frame):
+        img = QImage(
+            rgb_frame.data,
+            rgb_frame.shape[1],
+            rgb_frame.shape[0],
+            rgb_frame.shape[1] * 3,
+            QImage.Format_RGB888,
+        )
+        self._bridge.pixmap_ready.emit(QPixmap.fromImage(img))
+
+    def _emit_no_signal(self):
+        self._bridge.pixmap_ready.emit(QPixmap(asset_path('nosignal.png')))
 
     def display(self):
         sqlofDisplay = sqls.SqlF()
@@ -1342,6 +1353,7 @@ class Camera:
         facecountDic = {} # 用来记录人脸重复的次数
         faceList = [] # 保存当前帧的人脸数据
         tempfaceList = [] # 人脸存储列表，保存上一帧的人的姓名
+        debug_recognition = os.getenv('FACE_RECO_DEBUG', '0') == '1'
 
         if os.path.exists('model/model.yml'):  # 表示为已经录入过人脸了，可以进行人脸识别操作了
             yml = 'model' + '/' + 'model.yml'
@@ -1349,9 +1361,11 @@ class Camera:
         '''
         yml文件比较大，避免反复的读取操作是必须的
         '''
-        while self.cap.isOpened():
-            while True:
+        while self._running and self.cap.isOpened():
+            while self._running:
                 success, frame = self.cap.read()
+                if not self._running:
+                    break
                 if success:
                     rawframe = cv2.resize(frame, (640, 360))
                     # cv2.imshow('raw', frame)
@@ -1375,8 +1389,9 @@ class Camera:
                             # yml = 'model' + '/' + 'model.yml'
                             # self.recognizer.read(yml)
                             idum, confidence = self.recognizer.predict(frame[y:y + h, x:x + w])
-                            print('idum为', idum)
-                            print('confidence；', confidence)
+                            if debug_recognition:
+                                print('idum为', idum)
+                                print('confidence；', confidence)
                             if confidence < 68:
                                 cv2.putText(rawframe, userdic[idum], (x + 5, y + 15),
                                             cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255),
@@ -1395,13 +1410,9 @@ class Camera:
                                             2)
 
                     rawframe = cv2.cvtColor(rawframe,cv2.COLOR_BGR2RGB)
-                    img = QImage(rawframe.data, rawframe.shape[1],
-                                 rawframe.shape[0], rawframe.shape[1]*3, QImage.Format_RGB888)
-                    # print(self.outLabel)
-                    '''
-                    循环输出self.outLabel对象，其目的是前期调试使用
-                    '''
-                    self.outLabel.setPixmap(QPixmap.fromImage(img))
+                    if not self._running:
+                        break
+                    self._emit_frame(rawframe)
 
                     # 人脸计数代码区--------
                     for name,count in facecountDic.items():
@@ -1418,17 +1429,21 @@ class Camera:
                     cv2.waitKey(10)
                 else:
                     self.cap.release()
-                    self.outLabel.setPixmap(QPixmap(asset_path('nosignal.png')))
+                    self._emit_no_signal()
                     print('released!')
                     break
+            if not self._running:
+                break
 
     def displaySimpleBrand(self):
         '''
         只进行人脸检测的版本
         '''
-        while self.cap.isOpened():
-            while True:
+        while self._running and self.cap.isOpened():
+            while self._running:
                 success, frame = self.cap.read()
+                if not self._running:
+                    break
                 if success:
                     rawframe = cv2.resize(frame, (640, 360))
                     # cv2.imshow('raw', frame)
@@ -1446,52 +1461,55 @@ class Camera:
                         cv2.rectangle(rawframe, (x, y), (x + w, y + h), (0, 0, 255), thickness=2)
 
                     rawframe = cv2.cvtColor(rawframe,cv2.COLOR_BGR2RGB)
-                    img = QImage(rawframe.data, rawframe.shape[1],
-                                 rawframe.shape[0], rawframe.shape[1]*3, QImage.Format_RGB888)
-
-                    # print(self.outLabel)
-                    '''
-                    循环输出self.outLabel对象，其目的是前期调试使用
-                    '''
-                    self.outLabel.setPixmap(QPixmap.fromImage(img))
+                    if not self._running:
+                        break
+                    self._emit_frame(rawframe)
                     cv2.waitKey(10)
                 else:
                     self.cap.release()
-                    self.outLabel.setPixmap(QPixmap(asset_path('nosignal.png')))
+                    self._emit_no_signal()
                     print('released!')
                     break
+            if not self._running:
+                break
 
     def displayJustdisplayBrand(self):
         '''
         displayJustdisplayBrand是只进行播放视频帧的版本 没有人脸检测和人脸识别
         '''
-        while self.cap.isOpened():
-            while True:
+        while self._running and self.cap.isOpened():
+            while self._running:
                 success, frame = self.cap.read()
+                if not self._running:
+                    break
                 if success:
                     rawframe = cv2.resize(frame, (640, 360))
                     rawframe = cv2.putText(rawframe, self.nameAndLocation, (7, 20),
                                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255),
                                         2)  # 这行代码是显示摄像头的名称和地点的
                     rawframe = cv2.cvtColor(rawframe,cv2.COLOR_BGR2RGB)
-                    img = QImage(rawframe.data, rawframe.shape[1],
-                                 rawframe.shape[0], rawframe.shape[1]*3, QImage.Format_RGB888)
-                    self.outLabel.setPixmap(QPixmap.fromImage(img))
+                    if not self._running:
+                        break
+                    self._emit_frame(rawframe)
                     cv2.waitKey(10)
                 else:
                     self.cap.release()
-                    self.outLabel.setPixmap(QPixmap(asset_path('nosignal.png')))
+                    self._emit_no_signal()
                     print('released!')
                     break
+            if not self._running:
+                break
 
     def displayLuruBrand(self):
         '''
         displayLuruBrand是Camera对象针对录入界面的定制版本，没有实时的人脸识别以及
         识别文字表示功能，更符合录入界面的应用场景需要
         '''
-        while self.cap.isOpened():
-            while True:
+        while self._running and self.cap.isOpened():
+            while self._running:
                 success, frame = self.cap.read()
+                if not self._running:
+                    break
                 if success:
                     rawframe = cv2.resize(frame, (640, 360))
                     # cv2.imshow('raw', frame)
@@ -1509,26 +1527,27 @@ class Camera:
                         cv2.rectangle(rawframe, (x, y), (x + w, y + h), (0, 0, 255), thickness=2)
 
                     rawframe = cv2.cvtColor(rawframe, cv2.COLOR_BGR2RGB)
-                    img = QImage(rawframe.data, rawframe.shape[1],
-                                 rawframe.shape[0], rawframe.shape[1]*3, QImage.Format_RGB888)
-
-                    # print(self.outLabel)
-                    '''
-                    循环输出self.outLabel对象，其目的是前期调试使用
-                    '''
-                    self.outLabel.setPixmap(QPixmap.fromImage(img))
+                    if not self._running:
+                        break
+                    self._emit_frame(rawframe)
                     cv2.waitKey(10)
                 else:
                     self.cap.release()
-                    self.outLabel.setPixmap(QPixmap(asset_path('nosignal.png')))
+                    self._emit_no_signal()
                     print('released!')
                     break
+            if not self._running:
+                break
 
     def close(self):
         global systemLock
+        self._running = False
         if self.url == 0:
             systemLock = 0  # 解锁
-        self.cap.release()
+        if self.cap is not None:
+            self.cap.release()
+        # Ensure the last frame cannot remain visible after stream shutdown.
+        self._emit_no_signal()
 
 
 class LogInWindow():
@@ -1611,6 +1630,16 @@ class RegisterWindow():
         print('取消注册新用户')
 
 
+def _shutdown_mainwindow():
+    target = globals().get('mainwindow')
+    if target is None:
+        return
+    try:
+        target.close()
+    except Exception as exc:
+        print('关闭主窗口资源时出现异常：', exc)
+
+
 app = QApplication([])
 app.setFont(DEFAULT_UI_FONT)
 start_login = LogInWindow()
@@ -1619,6 +1648,7 @@ app.exec_()
 
 if start_login.StartSignal == True:
     mainwindow = MWindow()
+    app.aboutToQuit.connect(_shutdown_mainwindow)
     mainwindow.mui.show()
     app.exec_()
 
@@ -1627,3 +1657,5 @@ if start_login.StartSignal == True:
 # mainwindow = MWindow()
 # mainwindow.mui.show()
 # app.exec_()
+
+

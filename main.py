@@ -1160,9 +1160,23 @@ class ResetWindow():
         idlists = []
         faceSamples = []
 
-        print('重置按钮已经按下，会删除data目录、model目录下的所有文件，重置config')
-        shutil.rmtree('data')
-        os.mkdir('data')
+        print('重置按钮已经按下，会清空人脸样本、模型和配置')
+        data_dir = 'data'
+        if os.path.isdir(data_dir):
+            for entry in os.listdir(data_dir):
+                entry_path = os.path.join(data_dir, entry)
+                if os.path.isdir(entry_path):
+                    shutil.rmtree(entry_path, ignore_errors=True)
+                elif os.path.isfile(entry_path):
+                    # 仅清理常见样本文件，保留 data 目录下的代码文件
+                    ext = os.path.splitext(entry)[1].lower()
+                    if ext in {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}:
+                        try:
+                            os.remove(entry_path)
+                        except OSError:
+                            pass
+        else:
+            os.mkdir(data_dir)
         shutil.rmtree('model')
         os.mkdir('model')
         print('totalUser:', totalUser)

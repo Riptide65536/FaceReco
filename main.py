@@ -11,9 +11,10 @@ from PySide2.QtGui import QImage, QPixmap, QFont
 from PySide2.QtCore import Qt, QObject, Signal
 import numpy as np
 import cv2, threading, os, shutil
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 import ast
 import datetime
+from services.emotion_service import EmotionRecognitionService
 from paths import asset_path, ui_path
 import sqls # sqls是自己写的模块
 
@@ -1229,6 +1230,8 @@ class LogWindow():
         self.ui.setStyleSheet(APP_STYLESHEET)
         self.ui.setFixedSize(self.ui.width(), self.ui.height())
         self.ui.tableWidget.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.ui.tableWidget.setColumnCount(4)
+        self.ui.tableWidget.setHorizontalHeaderLabels(['姓名', '地点', '时间', '情绪'])
         self.ui.pushButton.clicked.connect(self.inquiryDB)
         self.ui.pushButton2.clicked.connect(self.clearDB)
 
@@ -1253,22 +1256,33 @@ class LogWindow():
         for i in allplace:
             self.ui.comboBox.addItem(i[0])
 
-        results = self.sqlofLog.tableWidgetDisplay()
-        x = 0
-        for i in results:
-            y = 0
-            row_count = self.ui.tableWidget.rowCount()  # 返回当前行数(尾部)
-            self.ui.tableWidget.insertRow(row_count)  # 尾部插入一行
-            for ii in i:
-                self.ui.tableWidget.setItem(x, y, QTableWidgetItem(str(results[x][y])))
-                y += 1
-            x += 1
+        default_start = nowdatetime - datetime.timedelta(days=30)
+        default_end = nowdatetime
+        results = self.sqlofLog.query_logs_with_emotion(
+            name=None,
+            location=None,
+            start_time=default_start,
+            end_time=default_end,
+        )
+        self._fill_table(results)
 
     def clearDB(self):
         # 以下代码是对于数据库的操作
         self.sqlofLog.resetDB()
         # 下面是tableWidget刷新操作
         self.ui.tableWidget.setRowCount(0)
+
+    def _fill_table(self, results):
+        self.ui.tableWidget.setRowCount(0)
+        for row in results:
+            row_count = self.ui.tableWidget.rowCount()
+            self.ui.tableWidget.insertRow(row_count)
+            values = list(row)
+            if len(values) < 4:
+                values.extend([''] * (4 - len(values)))
+            for col in range(4):
+                self.ui.tableWidget.setItem(row_count, col, QTableWidgetItem(str(values[col] if values[col] is not None else '')))
+
     def inquiryDB(self):
         print('日志窗口的查询按钮已经按下')
         peoplename = self.ui.comboBox2.currentText()
@@ -1282,42 +1296,13 @@ class LogWindow():
         # print('starttime', starttime)
         # print('endtime', endtime)
 
-        if peoplename == '任何人员':
-            if place == '任何地点':
-                sql = '''
-                select * from log
-                where time between '%s' and '%s'
-                ''' % (starttime, endtime)
-            else:
-                sql = '''
-                select * from log
-                where place = '%s' and time between '%s' and '%s'
-                ''' % (place, starttime, endtime)
-        else:
-            if place == '任何地点':
-                sql = '''
-                select * from log
-                where name = '%s' and time between '%s' and '%s'
-                ''' % (peoplename, starttime, endtime)
-            else:
-                sql = '''
-                select * from log
-                where name = '%s' and place = '%s' and time between '%s' and '%s'
-                ''' % (peoplename, place, starttime, endtime)
-
-        self.sqlofLog.cursor.execute(sql)
-        results = self.sqlofLog.cursor.fetchall()
-        # 下面是tableWidget刷新操作
-        self.ui.tableWidget.setRowCount(0)
-        x = 0
-        for i in results:
-            y = 0
-            row_count = self.ui.tableWidget.rowCount()  # 返回当前行数(尾部)
-            self.ui.tableWidget.insertRow(row_count)  # 尾部插入一行
-            for ii in i:
-                self.ui.tableWidget.setItem(x, y, QTableWidgetItem(str(results[x][y])))
-                y += 1
-            x += 1
+        results = self.sqlofLog.query_logs_with_emotion(
+            name=peoplename,
+            location=place,
+            start_time=starttime,
+            end_time=endtime,
+        )
+        self._fill_table(results)
 
 
 class Camera:
@@ -1333,6 +1318,50 @@ class Camera:
         self.cap = cv2.VideoCapture(self.url)
         self.detector = cv2.CascadeClassifier(asset_path('haarcascade_frontalface_default.xml'))
         self.recognizer = cv2.face.LBPHFaceRecognizer_create()
+        self._pil_font = self._load_pil_font(28)
+        self.emotion = None
+        try:
+            # The model file may be missing, or TensorFlow may be unavailable.
+            # In that case we gracefully fall back to "中性".
+            self.emotion = EmotionRecognitionService()
+        except Exception as exc:
+            print('情绪识别服务不可用，已回退为中性：', exc)
+
+    @staticmethod
+    def _load_pil_font(size=28):
+        # Prefer common Chinese fonts on Windows, then generic fallbacks.
+        candidates = [
+            r"C:\Windows\Fonts\msyh.ttc",
+            r"C:\Windows\Fonts\simhei.ttf",
+            r"C:\Windows\Fonts\simsun.ttc",
+        ]
+        for path in candidates:
+            try:
+                if os.path.exists(path):
+                    return ImageFont.truetype(path, size=size)
+            except Exception:
+                continue
+        try:
+            return ImageFont.load_default()
+        except Exception:
+            return None
+
+    def _draw_text(self, frame_bgr, text, org, color=(0, 0, 255), font_scale=0.8, thickness=2):
+        text = str(text)
+        if text == '':
+            return frame_bgr
+        # ASCII-only text can stay on fast OpenCV renderer.
+        if all(ord(ch) < 128 for ch in text) or self._pil_font is None:
+            cv2.putText(frame_bgr, text, org, cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, thickness)
+            return frame_bgr
+
+        rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+        pil_img = Image.fromarray(rgb)
+        draw = ImageDraw.Draw(pil_img)
+        # OpenCV color is BGR; PIL expects RGB.
+        rgb_color = (int(color[2]), int(color[1]), int(color[0]))
+        draw.text((int(org[0]), int(org[1]) - 24), text, fill=rgb_color, font=self._pil_font)
+        return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
 
     def _emit_frame(self, rgb_frame):
         img = QImage(
@@ -1353,6 +1382,7 @@ class Camera:
         facecountDic = {} # 用来记录人脸重复的次数
         faceList = [] # 保存当前帧的人脸数据
         tempfaceList = [] # 人脸存储列表，保存上一帧的人的姓名
+        emotion_state = {} # 按姓名做轻量情绪防抖，减少画面文字抖动
         debug_recognition = os.getenv('FACE_RECO_DEBUG', '0') == '1'
 
         if os.path.exists('model/model.yml'):  # 表示为已经录入过人脸了，可以进行人脸识别操作了
@@ -1372,9 +1402,14 @@ class Camera:
                     frame = cv2.cvtColor(rawframe, cv2.COLOR_BGR2GRAY)
                     # cv2.imshow('raw2', frame)
                     self.faces = self.detector.detectMultiScale(frame, 1.3, 5)
-                    rawframe = cv2.putText(rawframe, self.nameAndLocation, (7, 20),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255),
-                                        2)  # 这行代码是显示摄像头的名称和地点的
+                    rawframe = self._draw_text(
+                        rawframe,
+                        self.nameAndLocation,
+                        (7, 20),
+                        color=(0, 0, 255),
+                        font_scale=0.6,
+                        thickness=2,
+                    )
                     # 其中gray为要检测的灰度图像，1.3(scaleFactor)为每次图像尺寸减小的比例，5为minNeighbors
                     #  框选人脸，for循环保证一个能检测的实时动态视频流
                     # for (x, y, w, h) in self.faces:
@@ -1393,21 +1428,49 @@ class Camera:
                                 print('idum为', idum)
                                 print('confidence；', confidence)
                             if confidence < 68:
-                                cv2.putText(rawframe, userdic[idum], (x + 5, y + 15),
-                                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255),
-                                            2)
-                                # 人脸计数代码区--------
-                                faceList.append(userdic[idum])
-                                if userdic[idum] not in tempfaceList:
-                                    facecountDic[userdic[idum]] = 1
+                                name = userdic.get(idum, str(idum))
+                                face_gray = frame[y:y + h, x:x + w]
+                                raw_emotion = '中性'
+                                if self.emotion is not None:
+                                    try:
+                                        raw_emotion, _ = self.emotion.predict(face_gray)
+                                    except Exception:
+                                        raw_emotion = '中性'
+                                state = emotion_state.get(name, {'last_raw': '', 'stable': raw_emotion, 'count': 0})
+                                if raw_emotion == state['last_raw']:
+                                    state['count'] += 1
                                 else:
-                                    facecountDic[userdic[idum]] += 1
+                                    state['last_raw'] = raw_emotion
+                                    state['count'] = 1
+                                if state['count'] >= 2:
+                                    state['stable'] = raw_emotion
+                                emotion_state[name] = state
+                                emotion_text = state['stable']
+                                rawframe = self._draw_text(
+                                    rawframe,
+                                    f'{name} | {emotion_text}',
+                                    (x + 5, y + 15),
+                                    color=(0, 0, 255),
+                                    font_scale=1,
+                                    thickness=2,
+                                )
+                                # 人脸计数代码区--------
+                                faceList.append((name, emotion_text))
+                                if (name, emotion_text) not in tempfaceList:
+                                    facecountDic[(name, emotion_text)] = 1
+                                else:
+                                    facecountDic[(name, emotion_text)] += 1
                                 # 人脸计数代码区--------
 
                             else:
-                                cv2.putText(rawframe, 'unknown', (x + 5, y + 15),
-                                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255),
-                                            2)
+                                rawframe = self._draw_text(
+                                    rawframe,
+                                    'unknown',
+                                    (x + 5, y + 15),
+                                    color=(0, 0, 255),
+                                    font_scale=1,
+                                    thickness=2,
+                                )
 
                     rawframe = cv2.cvtColor(rawframe,cv2.COLOR_BGR2RGB)
                     if not self._running:
@@ -1415,13 +1478,18 @@ class Camera:
                     self._emit_frame(rawframe)
 
                     # 人脸计数代码区--------
-                    for name,count in facecountDic.items():
+                    for (name, emotion_text), count in facecountDic.items():
                         if count >= faceMaxNum:
                             # 如果出现次数超过faceMaxNum
                             nowdatetime = str(datetime.datetime.now()).split('.')[0]
                             nowdatetime = datetime.datetime.strptime(nowdatetime, '%Y-%m-%d %H:%M:%S')
-                            sqlofDisplay.saveNameTimePic(name, self.nameAndLocation, nowdatetime)
-                            facecountDic[name] = 0 # 归零操作
+                            sqlofDisplay.saveNameTimePic(
+                                name,
+                                self.nameAndLocation,
+                                nowdatetime,
+                                emotion=emotion_text,
+                            )
+                            facecountDic[(name, emotion_text)] = 0 # 归零操作
                     tempfaceList = faceList # 当前帧变为上一帧
                     faceList = [] # 当前帧置零等待接收
                     # 人脸计数代码区--------
@@ -1451,9 +1519,14 @@ class Camera:
                     # cv2.imshow('raw2', frame)
                     faces = self.detector.detectMultiScale(frame, 1.3, 5)
                     # 其中gray为要检测的灰度图像，1.3为每次图像尺寸减小的比例，5为minNeighbors
-                    rawframe = cv2.putText(rawframe, self.nameAndLocation, (7, 20),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255),
-                                        2)  # 这行代码是显示摄像头的名称和地点的
+                    rawframe = self._draw_text(
+                        rawframe,
+                        self.nameAndLocation,
+                        (7, 20),
+                        color=(0, 0, 255),
+                        font_scale=0.6,
+                        thickness=2,
+                    )
 
                     # 框选人脸，for循环保证一个能检测的实时动态视频流
                     for (x, y, w, h) in faces:
@@ -1484,9 +1557,14 @@ class Camera:
                     break
                 if success:
                     rawframe = cv2.resize(frame, (640, 360))
-                    rawframe = cv2.putText(rawframe, self.nameAndLocation, (7, 20),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255),
-                                        2)  # 这行代码是显示摄像头的名称和地点的
+                    rawframe = self._draw_text(
+                        rawframe,
+                        self.nameAndLocation,
+                        (7, 20),
+                        color=(0, 0, 255),
+                        font_scale=0.6,
+                        thickness=2,
+                    )
                     rawframe = cv2.cvtColor(rawframe,cv2.COLOR_BGR2RGB)
                     if not self._running:
                         break
@@ -1517,9 +1595,14 @@ class Camera:
                     # cv2.imshow('raw2', frame)
                     faces = self.detector.detectMultiScale(frame, 1.3, 5)
                     # 其中gray为要检测的灰度图像，1.3为每次图像尺寸减小的比例，5为minNeighbors
-                    rawframe = cv2.putText(rawframe, 'enroll in facial recognition', (7, 20),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255),
-                                        2)  # 这行代码是显示摄像头的名称和地点的
+                    rawframe = self._draw_text(
+                        rawframe,
+                        'enroll in facial recognition',
+                        (7, 20),
+                        color=(0, 0, 255),
+                        font_scale=0.6,
+                        thickness=2,
+                    )
 
                     # 框选人脸，for循环保证一个能检测的实时动态视频流
                     for (x, y, w, h) in faces:

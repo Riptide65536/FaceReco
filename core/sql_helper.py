@@ -241,6 +241,31 @@ class SqlF:
         )
         return self.cursor.fetchall()
 
+    def query_logs_with_emotion(
+        self,
+        name: Optional[str] = None,
+        location: Optional[str] = None,
+        start_time: Optional[_dt.datetime] = None,
+        end_time: Optional[_dt.datetime] = None,
+    ) -> list[tuple[Any, Any, Any, Any]]:
+        clauses = []
+        params: list[Any] = []
+        if name and name != "任何人员":
+            clauses.append(f"name = {self.param}")
+            params.append(name)
+        if location and location != "任何地点":
+            clauses.append(f"location = {self.param}")
+            params.append(location)
+        if start_time and end_time:
+            clauses.append(f"timestamp BETWEEN {self.param} AND {self.param}")
+            params.extend([self._format_datetime(start_time), self._format_datetime(end_time)])
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        self.cursor.execute(
+            "SELECT name, location, timestamp, emotion FROM recognition_logs" + where + " ORDER BY timestamp DESC",
+            tuple(params),
+        )
+        return self.cursor.fetchall()
+
     def saveFaceFeature(self, name: str, feature_matrix: Any) -> bool:
         label = None
         feature_path = str(feature_matrix)

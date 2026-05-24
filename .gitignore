@@ -15,5 +15,10 @@ config/userdic.txt
 data/*
 !data/__init__.py
 !data/.gitkeep
+!data/config_manager.py
+!data/sql_helper.py
 model/*
 !model/.gitkeep
+
+reports/
+prompt.md

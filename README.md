@@ -134,6 +134,43 @@ mysql -u root -p < init_db.sql
 python -m pytest tests -q
 ```
 
+## 阶段四性能自检
+
+可使用内置性能脚本快速检查识别耗时、95/99 分位延迟与有效帧率。
+
+```powershell
+# 检测模式（只做人脸检测）
+python tools\perf_check.py --mode detect --source "1 Danny MacAskill’s Wee Day Out.flv" --frames 300
+
+# 识别模式（Haar + LBPH）
+python tools\perf_check.py --mode recognize --source 0 --frames 300
+
+# 识别+情绪模式（若情绪模型不可用会自动降级）
+python tools\perf_check.py --mode recognize_emotion --source 0 --frames 300
+
+# 稳定性巡检模式：持续 10 分钟，每 30 秒打印一次，并输出 JSON 报告
+python tools\perf_check.py --mode recognize --source 0 --duration-seconds 600 --report-interval 30 --output-json reports\perf_stability.json
+```
+
+关键指标说明：
+- `avg_latency_ms`：平均每帧处理耗时
+- `p95_latency_ms` / `p99_latency_ms`：95/99 分位耗时
+- `effective_fps`：整段处理有效帧率
+- `pass_single_response<=1000ms`：是否满足单次识别 ≤ 1 秒
+
+阶段四一键检查（环境 + 单测 + 性能）：
+
+```powershell
+# 仅演练命令，不实际执行
+python tools\stage4_check.py --dry-run
+
+# 实际执行（默认会写 reports/stage4_check_report.json）
+python tools\stage4_check.py --strict --perf-mode recognize --perf-source 0 --perf-frames 200
+
+# 稳定性巡检 10 分钟
+python tools\stage4_check.py --strict --perf-mode recognize --perf-source 0 --perf-duration-seconds 600 --perf-report-interval 30
+```
+
 ## 常见问题
 
 如果提示缺少 `PySide2` 或 `cv2`，通常是没有激活虚拟环境，或者 Python 版本太新。请确认：

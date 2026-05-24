@@ -55,6 +55,47 @@ def _resolve_user_data_dir(user_id, username):
         return name_dir
     return None
 
+
+def _rebuild_face_training_data():
+    detector = cv2.CascadeClassifier(asset_path('haarcascade_frontalface_default.xml'))
+    samples = []
+    labels = []
+    if detector.empty():
+        print('警告：人脸检测器加载失败，无法重建训练集')
+        return samples, labels
+
+    for user_id in sorted(userdic.keys()):
+        username = userdic[user_id]
+        user_dir = _resolve_user_data_dir(user_id, username)
+        if not user_dir:
+            continue
+        for filename in os.listdir(user_dir):
+            image_path = os.path.join(user_dir, filename)
+            if not os.path.isfile(image_path):
+                continue
+            try:
+                img = Image.open(image_path).convert('L')
+            except Exception as exc:
+                print('跳过损坏图片:', image_path, exc)
+                continue
+            img_np = np.array(img)
+            faces = detector.detectMultiScale(img_np)
+            for (x, y, w, h) in faces:
+                samples.append(img_np[y:y + h, x:x + w])
+                labels.append(int(user_id))
+    return samples, labels
+
+
+def _persist_user_training_config():
+    with open('config/idlists.txt', 'w') as f:
+        for label in idlists:
+            f.write(str(label))
+            f.write('\n')
+    with open('config/totalUser.txt', 'w') as f:
+        f.write(str(totalUser))
+    with open('config/userdic.txt', 'w') as f:
+        f.write(str(userdic))
+
 class MWindow():
 
     def __init__(self):
@@ -98,21 +139,14 @@ class MWindow():
             f.close()
             print('userdic:', userdic, type(userdic))
 
-        for i in range(1, totalUser+1):
-            if i in userdic:
-                user_dir = _resolve_user_data_dir(i, userdic[i])
-                if not user_dir:
-                    continue
-                for ii in os.listdir(user_dir):
-                    image_path = os.path.join(user_dir, ii)
-                    if not os.path.isfile(image_path):
-                        continue
-                    img = Image.open(image_path).convert('L')
-                    img_np = np.array(img)
-                    detectorofInit = cv2.CascadeClassifier(asset_path('haarcascade_frontalface_default.xml'))
-                    facesofInit = detectorofInit.detectMultiScale(img_np)
-                    for (x, y, w, h) in facesofInit:
-                        faceSamples.append(img_np[y:y + h, x:x + w])
+        if userdic:
+            max_user_id = max([int(i) for i in userdic.keys()])
+            if totalUser < max_user_id:
+                totalUser = max_user_id
+
+        faceSamples, rebuilt_labels = _rebuild_face_training_data()
+        idlists = rebuilt_labels
+        print('rebuild face samples:', len(faceSamples), 'labels:', len(idlists))
         ######### ↑↑↑以上代码为人脸识别数据初始化过程 ########
 
         ######### ↓↓↓以下代码为显示初始化过程 ########
@@ -760,40 +794,19 @@ class DelFaceWindow():
         print('将要对选定的人脸进行删除')
         faceTodel = self.ui.comboBox.currentText()
         print(faceTodel)
-        # 删userdic
-        for i in range(1, totalUser+1):
-            if i in userdic.copy():
-                if userdic[i] == faceTodel:
-                    userdic.pop(i)
-                    while i in idlists:
-                        idlists.remove(i)
-                        # 删idlists
-        # 删除图片
         label_of_face = None
-        for label, username in userdic.items():
+        for label, username in list(userdic.items()):
             if username == faceTodel:
-                label_of_face = label
+                label_of_face = int(label)
                 break
+        if label_of_face is not None and label_of_face in userdic:
+            userdic.pop(label_of_face)
+
         for candidate in [os.path.join('data', faceTodel), os.path.join('data', str(label_of_face))]:
             if candidate and os.path.isdir(candidate):
                 shutil.rmtree(candidate)
-        # faceSamples要置空 重新训练
-        faceSamples = []
-        for i in range(1, totalUser+1):
-            if i in userdic:
-                user_dir = _resolve_user_data_dir(i, userdic[i])
-                if not user_dir:
-                    continue
-                for ii in os.listdir(user_dir):
-                    image_path = os.path.join(user_dir, ii)
-                    if not os.path.isfile(image_path):
-                        continue
-                    img = Image.open(image_path).convert('L')
-                    img_np = np.array(img)
-                    detectorofInit = cv2.CascadeClassifier(asset_path('haarcascade_frontalface_default.xml'))
-                    facesofInit = detectorofInit.detectMultiScale(img_np)
-                    for (x, y, w, h) in facesofInit:
-                        faceSamples.append(img_np[y:y + h, x:x + w])
+        totalUser = max([int(i) for i in userdic.keys()], default=0)
+        faceSamples, idlists = _rebuild_face_training_data()
 
         tag1, tag2, tag3, tag4 = False, False, False, False
         remeurl1, remeurl2, remeurl3, remeurl4 = '', '', '', ''
@@ -831,34 +844,32 @@ class DelFaceWindow():
             mainwindow.close4()
             mainwindow.busy4 = False
             # 释放四号窗口 四号相机 设置为空闲 并保存了它的URL和名称地址、显示模式 以便后续重启操作
-        self.recog = cv2.face.LBPHFaceRecognizer_create()
-        # 初始化人脸识别算法
-        self.recog.train(faceSamples, np.array(idlists))
-        # 保存idlists数据 ----------------------------------
-        f = open('config/idlists.txt', 'w')
-        for i in idlists:
-            f.write(str(i))
-            f.write('\n')
-        f.close()
-        # 保存userdic数据 ------------------------------------
-        f = open('config/userdic.txt', 'w')
-        f.write(str(userdic))
-        f.close()
-        yml = 'model' + '/' + 'model' + '.yml'
-        self.recog.write(yml)
-
-        '''
-                    下面的代码是以前关闭摄像头的重启操作
-                    '''
-        if tag1 == True:
-            mainwindow.start1(remeurl1, remeplace1, rememode1)
-        if tag2 == True:
-            mainwindow.start2(remeurl2, remeplace2, rememode2)
-        if tag3 == True:
-            mainwindow.start3(remeurl3, remeplace3, rememode3)
-        if tag4 == True:
-            mainwindow.start4(remeurl4, remeplace4, rememode4)
-
+        try:
+            if len(faceSamples) != len(idlists):
+                QMessageBox.about(self.ui, '错误', f'训练数据异常：样本数={len(faceSamples)}，标签数={len(idlists)}')
+                return
+            yml = 'model' + '/' + 'model' + '.yml'
+            if len(faceSamples) == 0:
+                if os.path.exists(yml):
+                    os.remove(yml)
+            else:
+                self.recog = cv2.face.LBPHFaceRecognizer_create()
+                # 初始化人脸识别算法
+                self.recog.train(faceSamples, np.array(idlists))
+                self.recog.write(yml)
+            _persist_user_training_config()
+        finally:
+            '''
+                        下面的代码是以前关闭摄像头的重启操作
+                        '''
+            if tag1 == True:
+                mainwindow.start1(remeurl1, remeplace1, rememode1)
+            if tag2 == True:
+                mainwindow.start2(remeurl2, remeplace2, rememode2)
+            if tag3 == True:
+                mainwindow.start3(remeurl3, remeplace3, rememode3)
+            if tag4 == True:
+                mainwindow.start4(remeurl4, remeplace4, rememode4)
 
     def cancel(self):
         print('push the cancel button')
@@ -947,19 +958,26 @@ class LuruWindow():
         global idlists
 
         print('训练模型按钮已经按下')
-        # self.face_samples = []
-        # self.lists = []
-        li = []
         tag1, tag2, tag3, tag4 = False, False, False, False
         remeurl1, remeurl2, remeurl3, remeurl4 = '', '', '', ''
         remeplace1, remeplace2, remeplace3, remeplace4 = '', '', '', ''
         rememode1, rememode2, rememode3, rememode4 = '', '', '', ''
+        username = self.ui.lineEdit.text().strip()
 
-        if self.ui.lineEdit.text() == '':
+        if username == '':
             QMessageBox.about(self.ui, '错误', '你还没有输入姓名')
-        elif not os.path.exists('data/' + self.ui.lineEdit.text()) and not os.path.exists('data/' + str(totalUser + 1)):
+        elif not os.path.exists('data/' + username):
             QMessageBox.about(self.ui, '错误', '该用户不存在或未进行录入')
         else:
+            existing_id = None
+            for label, saved_name in userdic.items():
+                if saved_name == username:
+                    existing_id = int(label)
+                    break
+            if existing_id is None:
+                next_id = max([int(i) for i in userdic.keys()], default=0) + 1
+                userdic[next_id] = username
+                totalUser = max(totalUser, next_id)
 
             '''
             因为在按下拍摄按钮后，主界面的display窗口就已经启动 > display()会检测yml文件的存在
@@ -1006,90 +1024,33 @@ class LuruWindow():
                 mainwindow.busy4 = False
                 # 释放四号窗口 四号相机 设置为空闲 并保存了它的URL和名称地址、显示模式 以便后续重启操作
 
-            self.recog = cv2.face.LBPHFaceRecognizer_create()
-            # 初始化人脸识别算法
-            train_dir = os.path.join('data', self.ui.lineEdit.text())
-            if not os.path.isdir(train_dir):
-                train_dir = os.path.join('data', str(totalUser + 1))
+            try:
+                faceSamples, idlists = _rebuild_face_training_data()
+                if len(faceSamples) == 0:
+                    QMessageBox.about(self.ui, '错误', '未检测到有效人脸样本，请重新拍摄后再训练。')
+                    return
+                if len(faceSamples) != len(idlists):
+                    QMessageBox.about(self.ui, '错误', f'训练数据异常：样本数={len(faceSamples)}，标签数={len(idlists)}')
+                    return
 
-            for i in os.listdir(train_dir):
-                # img = cv2.imread('data/' + self.ui.lineEdit.text() + '/' + i)
-                image_path = os.path.join(train_dir, i)
-                if not os.path.isfile(image_path):
-                    continue
-                img = Image.open(image_path).convert('L')
-
-                print('褰撳墠璁粌鐨勪汉鑴稿浘鐗囪矾寰勶細' + image_path)
-                # id = int(i.split('.')[0])
-                # self.ids.append(id)
-                img_np = np.array(img)
-                detectorOfTrain = cv2.CascadeClassifier(asset_path('haarcascade_frontalface_default.xml'))
-                facesofTrain = detectorOfTrain.detectMultiScale(img_np)
-
-                # li.append(totalUser+1)
-                # print(li)
-
-                for (x, y, w, h) in facesofTrain:
-                    '''
-                    注意！ 有的情况一张图会识别出两张人脸 这个需要处理一下
-                    否则 在后面 recog.train()的faceSamples长度和idlists的长度会出现不匹配
-
-                    解决方法：
-                    将li.append()由for(x,y,w,h)循环外 转移至循环内 以保证faceSamples长度
-                    与idlists长度的匹配
-                    这样一来，人脸采集时 每个人的照片都是10张 但是获取的人脸样本有的人会大于10
-                    因为有些照片 一张图片可能会识别出两个人脸样本
-                    '''
-                    faceSamples.append(img_np[y:y + h, x:x + w])
-                    li.append(totalUser + 1)
-                    print(li)
-                    # 将获取的图片添加到face_samples这个list之中
-
-            print(len(faceSamples))
-            print(type(faceSamples))
-            print(type(faceSamples[0]))
-            print(type(faceSamples[0][0]))
-            idlists = idlists + li
-            print(idlists)
-
-            # 保存idlists数据 ----------------------------------
-            f = open('config/idlists.txt', 'w')
-            for i in idlists:
-                f.write(str(i))
-                f.write('\n')
-            f.close()
-
-            self.recog.train(faceSamples, np.array(idlists))
-
-            totalUser = totalUser + 1
-
-            # 保存totalUser数据 ---------------------------------
-            f = open('config/totalUser.txt', 'w')
-            f.write(str(totalUser))
-            f.close()
-
-            userdic[totalUser] = self.ui.lineEdit.text()
-            # 完成label标签和用户名的对应关系
-
-            # 保存userdic数据 ------------------------------------
-            f = open('config/userdic.txt', 'w')
-            f.write(str(userdic))
-            f.close()
-
-            yml = 'model' + '/' + 'model' + '.yml'
-            self.recog.write(yml)
-
-            '''
-            下面的代码是以前关闭摄像头的重启操作
-            '''
-            if tag1 == True:
-                mainwindow.start1(remeurl1, remeplace1, rememode1)
-            if tag2 == True:
-                mainwindow.start2(remeurl2, remeplace2, rememode2)
-            if tag3 == True:
-                mainwindow.start3(remeurl3, remeplace3, rememode3)
-            if tag4 == True:
-                mainwindow.start4(remeurl4, remeplace4, rememode4)
+                self.recog = cv2.face.LBPHFaceRecognizer_create()
+                self.recog.train(faceSamples, np.array(idlists))
+                yml = 'model' + '/' + 'model' + '.yml'
+                self.recog.write(yml)
+                totalUser = max([int(i) for i in userdic.keys()], default=0)
+                _persist_user_training_config()
+            finally:
+                '''
+                下面的代码是以前关闭摄像头的重启操作
+                '''
+                if tag1 == True:
+                    mainwindow.start1(remeurl1, remeplace1, rememode1)
+                if tag2 == True:
+                    mainwindow.start2(remeurl2, remeplace2, rememode2)
+                if tag3 == True:
+                    mainwindow.start3(remeurl3, remeplace3, rememode3)
+                if tag4 == True:
+                    mainwindow.start4(remeurl4, remeplace4, rememode4)
 
     def closeQuit(self):
         if hasattr(self, 'lurucam') and self.lurucam is not None:

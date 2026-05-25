@@ -115,3 +115,43 @@ def test_attendance_absence_and_summary_interfaces(tmp_path):
     assert summary["alice"]["迟到"] >= 1
 
     sql.dbclose()
+
+
+def test_export_attendance_report_csv(tmp_path):
+    db_path = tmp_path / "test_export.db"
+    csv_path = tmp_path / "attendance_export.csv"
+    sql = SqlF(backend="sqlite", sqlite_path=str(db_path))
+
+    assert sql.saveNameTimePic(
+        "linhao",
+        "gate-a",
+        dt.datetime(2026, 5, 26, 8, 40),
+        emotion="高兴",
+        attendance_type="上班打卡",
+    )
+    assert sql.saveNameTimePic(
+        "linhao",
+        "gate-a",
+        dt.datetime(2026, 5, 26, 18, 15),
+        emotion="中性",
+        attendance_type="下班打卡",
+    )
+
+    ok, count = sql.exportAttendanceReport(
+        output_path=str(csv_path),
+        name="linhao",
+        location="gate-a",
+        start_time=dt.datetime(2026, 5, 26, 0, 0),
+        end_time=dt.datetime(2026, 5, 26, 23, 59),
+        attendance_type="任何类型",
+        status="任何状态",
+    )
+
+    assert ok
+    assert count == 2
+    text = csv_path.read_text(encoding="utf-8-sig")
+    assert "姓名,地点,时间,情绪,考勤类型,状态" in text
+    assert "linhao,gate-a,2026-05-26 08:40:00,高兴,上班打卡,正常" in text
+    assert "linhao,gate-a,2026-05-26 18:15:00,中性,下班打卡,正常" in text
+
+    sql.dbclose()

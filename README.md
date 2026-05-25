@@ -150,6 +150,9 @@ python tools\perf_check.py --mode recognize_emotion --source 0 --frames 300
 
 # 稳定性巡检模式：持续 10 分钟，每 30 秒打印一次，并输出 JSON 报告
 python tools\perf_check.py --mode recognize --source 0 --duration-seconds 600 --report-interval 30 --output-json reports\perf_stability.json
+
+# 严格阈值模式：不满足阈值时返回非0退出码（便于验收/CI）
+python tools\perf_check.py --mode recognize --source 0 --frames 300 --strict-thresholds --max-latency-ms 1000 --min-fps 15
 ```
 
 关键指标说明：
@@ -169,6 +172,22 @@ python tools\stage4_check.py --strict --perf-mode recognize --perf-source 0 --pe
 
 # 稳定性巡检 10 分钟
 python tools\stage4_check.py --strict --perf-mode recognize --perf-source 0 --perf-duration-seconds 600 --perf-report-interval 30
+
+# 带阈值验收（性能未达标会失败）
+python tools\stage4_check.py --strict --perf-mode recognize --perf-source 0 --perf-frames 300 --perf-max-latency-ms 1000 --perf-min-fps 15
+```
+
+阶段四增强检查（含黑盒业务场景 + 白盒并发巡检）：
+
+```powershell
+# 轻量巡检（先不跑性能）
+python tools\stage4_check.py --strict --skip-perf
+
+# 含并发参数控制
+python tools\stage4_check.py --strict --skip-perf --whitebox-threads 8 --whitebox-loops-per-thread 80 --whitebox-timeout-seconds 30 --whitebox-memory-limit-mb 80
+
+# 完整检查（环境+单测+黑盒+白盒+性能）
+python tools\stage4_check.py --strict --perf-mode recognize --perf-source 0 --perf-frames 300 --perf-max-latency-ms 1000 --perf-min-fps 15
 ```
 
 ## 常见问题

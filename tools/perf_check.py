@@ -61,18 +61,18 @@ def benchmark(
     mode: str,
     resize_width: int = 640,
     resize_height: int = 360,
-) -> int:
+) -> tuple[int, dict[str, Any] | None]:
     cv2_local = _require_cv2()
     cap = cv2_local.VideoCapture(source)
     if not cap.isOpened():
         print(f"[ERR] cannot open source: {source}")
-        return 2
+        return 2, None
 
     detector = cv2_local.CascadeClassifier(str(CASCADE_PATH))
     if detector.empty():
         print(f"[ERR] cannot load cascade: {CASCADE_PATH}")
         cap.release()
-        return 2
+        return 2, None
 
     recognizer = None
     if mode in {"recognize", "recognize_emotion"}:
@@ -141,7 +141,7 @@ def benchmark(
     measured_frames = len(latencies_ms)
     if measured_frames == 0:
         print("[ERR] no measured frames. Check source/codec/camera.")
-        return 2
+        return 2, None
 
     summary = _build_summary(
         source=source,
@@ -156,7 +156,7 @@ def benchmark(
     )
 
     _print_summary(summary)
-    return 0
+    return 0, summary
 
 
 def _build_summary(
@@ -396,6 +396,23 @@ def main() -> int:
         default="",
         help="optional path to write JSON summary",
     )
+    parser.add_argument(
+        "--strict-thresholds",
+        action="store_true",
+        help="exit non-zero if performance thresholds are not met",
+    )
+    parser.add_argument(
+        "--max-latency-ms",
+        type=float,
+        default=1000.0,
+        help="max allowed per-frame latency (worst-case), used with --strict-thresholds",
+    )
+    parser.add_argument(
+        "--min-fps",
+        type=float,
+        default=0.0,
+        help="min required effective fps, used with --strict-thresholds",
+    )
     args = parser.parse_args()
 
     source = _parse_source(str(args.source))
@@ -412,34 +429,50 @@ def main() -> int:
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
             print(f"[INFO] report saved: {out}")
-        return 0 if "error" not in result else 2
+        if "error" in result:
+            return 2
+        if args.strict_thresholds:
+            if result.get("worst_max_latency_ms", 1e9) > float(args.max_latency_ms):
+                print(
+                    f"[FAIL] worst_max_latency_ms={result['worst_max_latency_ms']:.2f} "
+                    f"> max-latency-ms={args.max_latency_ms:.2f}"
+                )
+                return 3
+            if result.get("avg_effective_fps", 0.0) < float(args.min_fps):
+                print(
+                    f"[FAIL] avg_effective_fps={result['avg_effective_fps']:.2f} "
+                    f"< min-fps={args.min_fps:.2f}"
+                )
+                return 3
+        return 0
 
-    code = benchmark(source=source, frames=max(10, args.frames), warmup=max(0, args.warmup), mode=args.mode)
-    if args.output_json and code == 0:
-        # Re-run a minimal benchmark summary for deterministic JSON output.
-        # Keep this lightweight and consistent with CLI invocation.
-        # Using one short run avoids buffering all internals from benchmark().
-        cv2_local = _require_cv2()
-        cap = cv2_local.VideoCapture(source)
-        if cap.isOpened():
-            cap.release()
+    code, summary = benchmark(source=source, frames=max(10, args.frames), warmup=max(0, args.warmup), mode=args.mode)
+    if args.output_json and code == 0 and summary is not None:
         out = Path(args.output_json)
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(
-            json.dumps(
-                {
-                    "source": str(source),
-                    "mode": args.mode,
-                    "frames": max(10, args.frames),
-                    "warmup": max(0, args.warmup),
-                    "note": "Run completed; see console for full numeric summary.",
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
+        summary = dict(summary)
+        summary.update({
+            "frames_arg": max(10, args.frames),
+            "warmup_arg": max(0, args.warmup),
+            "strict_thresholds": bool(args.strict_thresholds),
+            "max_latency_ms_threshold": float(args.max_latency_ms),
+            "min_fps_threshold": float(args.min_fps),
+        })
+        out.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"[INFO] report saved: {out}")
+    if code == 0 and summary is not None and args.strict_thresholds:
+        if float(summary.get("max_latency_ms", 1e9)) > float(args.max_latency_ms):
+            print(
+                f"[FAIL] max_latency_ms={summary['max_latency_ms']:.2f} "
+                f"> max-latency-ms={args.max_latency_ms:.2f}"
+            )
+            return 3
+        if float(summary.get("effective_fps", 0.0)) < float(args.min_fps):
+            print(
+                f"[FAIL] effective_fps={summary['effective_fps']:.2f} "
+                f"< min-fps={args.min_fps:.2f}"
+            )
+            return 3
     return code
 
 

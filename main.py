@@ -5,7 +5,7 @@
 可以全彩色显示
 '''
 
-from PySide2.QtWidgets import QApplication, QMessageBox, QTableWidgetItem, QHeaderView, QLabel, QComboBox, QPushButton
+from PySide2.QtWidgets import QApplication, QMessageBox, QTableWidgetItem, QHeaderView, QLabel, QComboBox, QPushButton, QFileDialog
 from PySide2.QtUiTools import QUiLoader
 from PySide2.QtGui import QImage, QPixmap, QFont
 from PySide2.QtCore import Qt, QObject, Signal
@@ -1277,8 +1277,11 @@ class LogWindow():
         self.btnAbsence.setFont(DEFAULT_UI_FONT)
         self.btnSummary = QPushButton('考勤汇总', self.ui.layoutWidget)
         self.btnSummary.setFont(DEFAULT_UI_FONT)
+        self.btnExport = QPushButton('导出报表', self.ui.layoutWidget)
+        self.btnExport.setFont(DEFAULT_UI_FONT)
         self.btnAbsence.clicked.connect(self.showAbsenceList)
         self.btnSummary.clicked.connect(self.showAttendanceSummary)
+        self.btnExport.clicked.connect(self.exportAttendanceReport)
         # Place to the right side of existing filters, no .ui redesign required.
         grid.addWidget(self.labelAttendanceType, 1, 8)
         grid.addWidget(self.comboAttendanceType, 2, 8)
@@ -1286,6 +1289,7 @@ class LogWindow():
         grid.addWidget(self.comboStatus, 2, 9)
         grid.addWidget(self.btnAbsence, 1, 10)
         grid.addWidget(self.btnSummary, 2, 10)
+        grid.addWidget(self.btnExport, 1, 11, 2, 1)
 
     def showAbsenceList(self):
         target_day = self.ui.dateTimeEdit1.dateTime().toString("yyyy-MM-dd")
@@ -1338,6 +1342,38 @@ class LogWindow():
             status=self.comboStatus.currentText(),
         )
         self._fill_table(results)
+
+    def exportAttendanceReport(self):
+        peoplename = self.ui.comboBox2.currentText()
+        place = self.ui.comboBox.currentText()
+        starttime = self.ui.dateTimeEdit1.dateTime().toString("yyyy-MM-dd hh:mm:ss")
+        starttime = datetime.datetime.strptime(starttime, '%Y-%m-%d %H:%M:%S')
+        endtime = self.ui.dateTimeEdit2.dateTime().toString("yyyy-MM-dd hh:mm:ss")
+        endtime = datetime.datetime.strptime(endtime, '%Y-%m-%d %H:%M:%S')
+
+        default_name = f"attendance_report_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        filepath, _ = QFileDialog.getSaveFileName(
+            self.ui,
+            '导出报表',
+            default_name,
+            'CSV 文件 (*.csv)',
+        )
+        if not filepath:
+            return
+
+        ok, count = self.sqlofLog.exportAttendanceReport(
+            output_path=filepath,
+            name=peoplename,
+            location=place,
+            start_time=starttime,
+            end_time=endtime,
+            attendance_type=self.comboAttendanceType.currentText(),
+            status=self.comboStatus.currentText(),
+        )
+        if ok:
+            QMessageBox.about(self.ui, '导出成功', f'已导出 {count} 条记录：\n{filepath}')
+        else:
+            QMessageBox.about(self.ui, '导出失败', '写入报表文件失败，请检查路径权限。')
 
 
 class Camera:

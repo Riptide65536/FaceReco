@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as _dt
+import csv
 import hashlib
 import hmac
 import logging
@@ -449,6 +450,36 @@ class SqlF:
         """Aggregate attendance/recognition statuses by person for report pages."""
         logs = self.getAttendanceReport(start_date, end_date)
         return self.attendance.summary_by_person(logs)
+
+    def exportAttendanceReport(
+        self,
+        output_path: str,
+        name: Optional[str] = None,
+        location: Optional[str] = None,
+        start_time: Optional[_dt.datetime] = None,
+        end_time: Optional[_dt.datetime] = None,
+        attendance_type: Optional[str] = None,
+        status: Optional[str] = None,
+    ) -> tuple[bool, int]:
+        """Export filtered recognition+attendance logs to a UTF-8 CSV file."""
+        rows = self.query_logs_with_emotion(
+            name=name,
+            location=location,
+            start_time=start_time,
+            end_time=end_time,
+            attendance_type=attendance_type,
+            status=status,
+        )
+        try:
+            with open(output_path, "w", encoding="utf-8-sig", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(["姓名", "地点", "时间", "情绪", "考勤类型", "状态"])
+                for row in rows:
+                    writer.writerow(list(row))
+            return True, len(rows)
+        except Exception as exc:
+            LOGGER.exception("Failed to export attendance report: %s", exc)
+            return False, 0
 
     def dbclose(self) -> None:
         if self.db is not None:

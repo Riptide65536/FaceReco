@@ -46,6 +46,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Stage-4 one-click checker")
     parser.add_argument("--skip-doctor", action="store_true", help="skip environment doctor")
     parser.add_argument("--skip-tests", action="store_true", help="skip pytest")
+    parser.add_argument("--skip-blackbox", action="store_true", help="skip blackbox business scenarios")
+    parser.add_argument("--skip-whitebox", action="store_true", help="skip whitebox concurrency checks")
     parser.add_argument("--skip-perf", action="store_true", help="skip performance check")
     parser.add_argument("--dry-run", action="store_true", help="show planned commands only")
     parser.add_argument("--strict", action="store_true", help="non-zero exit if any step fails")
@@ -55,6 +57,12 @@ def main() -> int:
     parser.add_argument("--perf-warmup", type=int, default=20)
     parser.add_argument("--perf-duration-seconds", type=int, default=0, help="if >0, run stability mode")
     parser.add_argument("--perf-report-interval", type=int, default=15)
+    parser.add_argument("--perf-max-latency-ms", type=float, default=1000.0)
+    parser.add_argument("--perf-min-fps", type=float, default=0.0)
+    parser.add_argument("--whitebox-threads", type=int, default=6)
+    parser.add_argument("--whitebox-loops-per-thread", type=int, default=60)
+    parser.add_argument("--whitebox-timeout-seconds", type=int, default=20)
+    parser.add_argument("--whitebox-memory-limit-mb", type=float, default=50.0)
     parser.add_argument(
         "--output-json",
         default=str(ROOT / "reports" / "stage4_check_report.json"),
@@ -75,6 +83,34 @@ def main() -> int:
             _run([py, "-m", "pytest", "-q"], cwd=ROOT, dry_run=args.dry_run)
         )
 
+    if not args.skip_blackbox:
+        blackbox_json = str(ROOT / "reports" / "blackbox_check_report.json")
+        blackbox_cmd = [
+            py,
+            str(TOOLS / "blackbox_check.py"),
+            "--output-json",
+            blackbox_json,
+        ]
+        steps.append(_run(blackbox_cmd, cwd=ROOT, dry_run=args.dry_run))
+
+    if not args.skip_whitebox:
+        whitebox_json = str(ROOT / "reports" / "whitebox_check_report.json")
+        whitebox_cmd = [
+            py,
+            str(TOOLS / "whitebox_check.py"),
+            "--threads",
+            str(max(1, args.whitebox_threads)),
+            "--loops-per-thread",
+            str(max(1, args.whitebox_loops_per_thread)),
+            "--timeout-seconds",
+            str(max(1, args.whitebox_timeout_seconds)),
+            "--memory-limit-mb",
+            str(max(1.0, args.whitebox_memory_limit_mb)),
+            "--output-json",
+            whitebox_json,
+        ]
+        steps.append(_run(whitebox_cmd, cwd=ROOT, dry_run=args.dry_run))
+
     if not args.skip_perf:
         perf_json = str(ROOT / "reports" / "perf_stage4.json")
         perf_cmd = [
@@ -86,6 +122,11 @@ def main() -> int:
             str(args.perf_source),
             "--output-json",
             perf_json,
+            "--strict-thresholds",
+            "--max-latency-ms",
+            str(args.perf_max_latency_ms),
+            "--min-fps",
+            str(args.perf_min_fps),
         ]
         if args.perf_duration_seconds > 0:
             perf_cmd += [

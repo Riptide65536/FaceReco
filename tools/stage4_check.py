@@ -44,11 +44,17 @@ def _run(cmd: list[str], cwd: Path, dry_run: bool = False) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Stage-4 one-click checker")
+    parser.add_argument(
+        "--python-exe",
+        default=sys.executable,
+        help="python interpreter used by sub-steps (default: current interpreter)",
+    )
     parser.add_argument("--skip-doctor", action="store_true", help="skip environment doctor")
     parser.add_argument("--skip-tests", action="store_true", help="skip pytest")
     parser.add_argument("--skip-blackbox", action="store_true", help="skip blackbox business scenarios")
     parser.add_argument("--skip-whitebox", action="store_true", help="skip whitebox concurrency checks")
     parser.add_argument("--skip-perf", action="store_true", help="skip performance check")
+    parser.add_argument("--skip-report", action="store_true", help="skip markdown acceptance report generation")
     parser.add_argument("--dry-run", action="store_true", help="show planned commands only")
     parser.add_argument("--strict", action="store_true", help="non-zero exit if any step fails")
     parser.add_argument("--perf-mode", default="recognize", choices=["detect", "recognize", "recognize_emotion"])
@@ -71,7 +77,7 @@ def main() -> int:
     args = parser.parse_args()
 
     steps: list[dict[str, Any]] = []
-    py = sys.executable
+    py = args.python_exe
 
     if not args.skip_doctor:
         steps.append(
@@ -164,6 +170,29 @@ def main() -> int:
     out.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"[stage4] summary saved: {out}")
 
+    if not args.skip_report:
+        report_cmd = [
+            py,
+            str(TOOLS / "stage4_report.py"),
+            "--stage4-json",
+            str(out),
+            "--blackbox-json",
+            str(ROOT / "reports" / "blackbox_check_report.json"),
+            "--whitebox-json",
+            str(ROOT / "reports" / "whitebox_check_report.json"),
+            "--perf-json",
+            str(ROOT / "reports" / "perf_stage4.json"),
+            "--output-md",
+            str(ROOT / "reports" / "stage4_acceptance_report.md"),
+        ]
+        report_step = _run(report_cmd, cwd=ROOT, dry_run=args.dry_run)
+        summary["report_step"] = report_step
+        if report_step["code"] != 0:
+            summary["passed"] = False
+            summary["failed_count"] += 1
+            failed.append(report_step)
+        out.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+
     for idx, s in enumerate(steps, start=1):
         status = "OK" if s["code"] == 0 else "FAIL"
         print(f"[{idx}/{len(steps)}] {status} code={s['code']} {s['cmd']}")
@@ -171,6 +200,14 @@ def main() -> int:
             print(s["stdout"][:600])
         if s["stderr"]:
             print(s["stderr"][:300])
+    if not args.skip_report and "report_step" in summary:
+        rs = summary["report_step"]
+        status = "OK" if rs["code"] == 0 else "FAIL"
+        print(f"[report] {status} code={rs['code']} {rs['cmd']}")
+        if rs["stdout"]:
+            print(rs["stdout"][:300])
+        if rs["stderr"]:
+            print(rs["stderr"][:300])
 
     if args.strict and failed:
         return 1

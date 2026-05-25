@@ -188,7 +188,15 @@ python tools\stage4_check.py --strict --skip-perf --whitebox-threads 8 --whitebo
 
 # 完整检查（环境+单测+黑盒+白盒+性能）
 python tools\stage4_check.py --strict --perf-mode recognize --perf-source 0 --perf-frames 300 --perf-max-latency-ms 1000 --perf-min-fps 15
+
+# 指定解释器（推荐使用 FaceReco 环境内 Python，避免 cv2/PySide2 缺失）
+python tools\stage4_check.py --python-exe D:\Anaconda_envs\envs\FaceReco\python.exe --strict --perf-mode recognize --perf-source 0 --perf-frames 300 --perf-max-latency-ms 1000 --perf-min-fps 15
 ```
+
+说明：
+- `tools\stage4_check.py` 运行结束后会自动生成：
+  - `reports\stage4_check_report.json`（步骤级结果）
+  - `reports\stage4_acceptance_report.md`（可直接提交的阶段四验收汇总）
 
 ## 常见问题
 

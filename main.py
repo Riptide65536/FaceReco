@@ -11,11 +11,14 @@ from PySide2.QtGui import QImage, QPixmap, QFont
 from PySide2.QtCore import Qt, QObject, Signal
 import numpy as np
 import cv2, threading, os, shutil
+from queue import Queue, Empty, Full
 from PIL import Image, ImageDraw, ImageFont
 import ast
 import datetime
 from services.emotion_service import EmotionRecognitionService
 from paths import asset_path, ui_path
+from app.services.app_service import AppService
+from app.ui_controller import MainUIController
 import sqls # sqls是自己写的模块
 
 DEFAULT_UI_FONT = QFont('Microsoft YaHei UI', 10)
@@ -36,6 +39,26 @@ totalUser = 0
 faceSamples = []
 idlists = []
 userdic = {}
+APP_SERVICE = AppService()
+
+
+def _sync_globals_from_state():
+    global systemLock, totalUser, faceSamples, idlists, userdic
+    state = APP_SERVICE.state
+    systemLock = state.system_lock_slot
+    totalUser = state.total_user
+    faceSamples = state.face_samples
+    idlists = state.id_lists
+    userdic = state.user_dic
+
+
+def _sync_state_from_globals():
+    state = APP_SERVICE.state
+    state.system_lock_slot = systemLock
+    state.total_user = totalUser
+    state.face_samples = faceSamples
+    state.id_lists = idlists
+    state.user_dic = userdic
 
 
 class _LabelBridge(QObject):
@@ -45,6 +68,18 @@ class _LabelBridge(QObject):
         super().__init__()
         self._label = label
         self.pixmap_ready.connect(self._label.setPixmap, Qt.QueuedConnection)
+
+
+class _MessageBridge(QObject):
+    show_message = Signal(str, str)
+
+    def __init__(self, parent_widget):
+        super().__init__()
+        self._parent_widget = parent_widget
+        self.show_message.connect(self._show_impl, Qt.QueuedConnection)
+
+    def _show_impl(self, title, text):
+        QMessageBox.about(self._parent_widget, title, text)
 
 def _resolve_user_data_dir(user_id, username):
     id_dir = os.path.join('data', str(user_id))
@@ -57,50 +92,20 @@ def _resolve_user_data_dir(user_id, username):
 
 
 def _rebuild_face_training_data():
-    detector = cv2.CascadeClassifier(asset_path('haarcascade_frontalface_default.xml'))
-    samples = []
-    labels = []
-    if detector.empty():
-        print('警告：人脸检测器加载失败，无法重建训练集')
-        return samples, labels
-
-    for user_id in sorted(userdic.keys()):
-        username = userdic[user_id]
-        user_dir = _resolve_user_data_dir(user_id, username)
-        if not user_dir:
-            continue
-        for filename in os.listdir(user_dir):
-            image_path = os.path.join(user_dir, filename)
-            if not os.path.isfile(image_path):
-                continue
-            try:
-                img = Image.open(image_path).convert('L')
-            except Exception as exc:
-                print('跳过损坏图片:', image_path, exc)
-                continue
-            img_np = np.array(img)
-            faces = detector.detectMultiScale(img_np)
-            for (x, y, w, h) in faces:
-                samples.append(img_np[y:y + h, x:x + w])
-                labels.append(int(user_id))
-    return samples, labels
+    _sync_state_from_globals()
+    return APP_SERVICE.pipeline.rebuild_training_data(APP_SERVICE.data_repo)
 
 
 def _persist_user_training_config():
-    with open('config/idlists.txt', 'w') as f:
-        for label in idlists:
-            f.write(str(label))
-            f.write('\n')
-    with open('config/totalUser.txt', 'w') as f:
-        f.write(str(totalUser))
-    with open('config/userdic.txt', 'w') as f:
-        f.write(str(userdic))
+    _sync_state_from_globals()
+    APP_SERVICE.persist_training_state()
 
 class MWindow():
 
     def __init__(self):
         self._closing = False
         self.mui = QUiLoader().load(ui_path('MUi.ui'))
+        self._msg_bridge = _MessageBridge(self.mui)
         self.mui.setFont(DEFAULT_UI_FONT)
         self.mui.setStyleSheet(APP_STYLESHEET)
         self.mui.setFixedSize(self.mui.width(), self.mui.height())
@@ -112,40 +117,18 @@ class MWindow():
         self.mui.luruButton.clicked.connect(self.luru)
         self.mui.logButton.clicked.connect(self.log)
         self.mui.pushButtonSaveConfig.clicked.connect(self.saveconfig)
+        self.ui_controller = MainUIController(self)
 
         self.busy1, self.busy2, self.busy3, self.busy4 = False, False, False, False
         self.cameraList = [] # 记录已经获取的摄像头 避免同一个摄像头重复获取
 
         ######### ↓↓↓以下代码为人脸识别数据初始化过程 ########
         global totalUser, faceSamples, idlists, userdic
-
-        f = open('config/totalUser.txt')
-        config_totalUser = f.read()
-        totalUser = int(config_totalUser)
-        f.close()
+        APP_SERVICE.initialize_state()
+        _sync_globals_from_state()
         print('totaluser:', totalUser, type(totalUser))
-
-        f = open('config/idlists.txt')
-        for line in f.readlines():
-            line = line.strip('\n')
-            idlists.append(int(line))
-        f.close()
         print('idlists:', idlists, type(idlists))
-
-        if os.path.getsize('config/userdic.txt') > 0:
-            f = open('config/userdic.txt')
-            config_userdic = f.read()
-            userdic = ast.literal_eval(config_userdic)
-            f.close()
-            print('userdic:', userdic, type(userdic))
-
-        if userdic:
-            max_user_id = max([int(i) for i in userdic.keys()])
-            if totalUser < max_user_id:
-                totalUser = max_user_id
-
-        faceSamples, rebuilt_labels = _rebuild_face_training_data()
-        idlists = rebuilt_labels
+        print('userdic:', userdic, type(userdic))
         print('rebuild face samples:', len(faceSamples), 'labels:', len(idlists))
         ######### ↑↑↑以上代码为人脸识别数据初始化过程 ########
 
@@ -285,34 +268,18 @@ class MWindow():
             event.accept()
 
     def saveconfig(self):  # 保存显示配置文件的函数
-        f = open('config/configwin1.txt', 'w')
-        nameAndLocation = self.mui.lineEdit11.text()
-        displaymode = self.mui.comboBox1.currentIndex()
-        url = self.mui.lineEdit12.text()
-        result1 = nameAndLocation + '\n' + str(displaymode) + '\n' + url + '\n'
-        f.write(result1)
-        f.close()
-        f = open('config/configwin2.txt', 'w')
-        nameAndLocation = self.mui.lineEdit21.text()
-        displaymode = self.mui.comboBox2.currentIndex()
-        url = self.mui.lineEdit22.text()
-        result2 = nameAndLocation + '\n' + str(displaymode) + '\n' + url + '\n'
-        f.write(result2)
-        f.close()
-        f = open('config/configwin3.txt', 'w')
-        nameAndLocation = self.mui.lineEdit31.text()
-        displaymode = self.mui.comboBox3.currentIndex()
-        url = self.mui.lineEdit32.text()
-        result3 = nameAndLocation + '\n' + str(displaymode) + '\n' + url + '\n'
-        f.write(result3)
-        f.close()
-        f = open('config/configwin4.txt', 'w')
-        nameAndLocation = self.mui.lineEdit41.text()
-        displaymode = self.mui.comboBox4.currentIndex()
-        url = self.mui.lineEdit42.text()
-        result4 = nameAndLocation + '\n' + str(displaymode) + '\n' + url + '\n'
-        f.write(result4)
-        f.close()
+        APP_SERVICE.config_repo.save_camera_slot(
+            1, self.mui.lineEdit11.text(), self.mui.comboBox1.currentIndex(), self.mui.lineEdit12.text()
+        )
+        APP_SERVICE.config_repo.save_camera_slot(
+            2, self.mui.lineEdit21.text(), self.mui.comboBox2.currentIndex(), self.mui.lineEdit22.text()
+        )
+        APP_SERVICE.config_repo.save_camera_slot(
+            3, self.mui.lineEdit31.text(), self.mui.comboBox3.currentIndex(), self.mui.lineEdit32.text()
+        )
+        APP_SERVICE.config_repo.save_camera_slot(
+            4, self.mui.lineEdit41.text(), self.mui.comboBox4.currentIndex(), self.mui.lineEdit42.text()
+        )
 
         QMessageBox.about(self.mui, '保存成功', '下次启动时会采用此次配置')
 
@@ -375,6 +342,7 @@ class MWindow():
 
     def start1(self, url, cameraNamePlace = '', displaymode = 0):
         global systemLock
+        APP_SERVICE.state.system_lock_slot = systemLock
         if self.busy1 == True:
             QMessageBox.about(self.mui, '错误', '窗口1忙碌，不可以添加视频流')
         elif url in self.cameraList:
@@ -382,7 +350,8 @@ class MWindow():
         else:
             if url == 0:
                 systemLock = 1  # 上锁
-            self.cam1 = Camera(url, self.mui.display1)
+                APP_SERVICE.state.system_lock_slot = systemLock
+            self.cam1 = Camera(url, self.mui.display1, on_stream_end=lambda cam: self._on_camera_stream_end(1, cam))
             self.cam1.displayMode = displaymode
             if cameraNamePlace != '':
                 self.cam1.nameAndLocation = cameraNamePlace
@@ -405,7 +374,8 @@ class MWindow():
         else:
             if url == 0:
                 systemLock = 2  # 上锁
-            self.cam2 = Camera(url, self.mui.display2)
+                APP_SERVICE.state.system_lock_slot = systemLock
+            self.cam2 = Camera(url, self.mui.display2, on_stream_end=lambda cam: self._on_camera_stream_end(2, cam))
             self.cam2.displayMode = displaymode
             if cameraNamePlace != '':
                 self.cam2.nameAndLocation = cameraNamePlace
@@ -428,7 +398,8 @@ class MWindow():
         else:
             if url == 0:
                 systemLock = 3  # 上锁
-            self.cam3 = Camera(url, self.mui.display3)
+                APP_SERVICE.state.system_lock_slot = systemLock
+            self.cam3 = Camera(url, self.mui.display3, on_stream_end=lambda cam: self._on_camera_stream_end(3, cam))
             self.cam3.displayMode = displaymode
             if cameraNamePlace != '':
                 self.cam3.nameAndLocation = cameraNamePlace
@@ -451,7 +422,8 @@ class MWindow():
         else:
             if url == 0:
                 systemLock = 4  # 上锁
-            self.cam4 = Camera(url, self.mui.display4)
+                APP_SERVICE.state.system_lock_slot = systemLock
+            self.cam4 = Camera(url, self.mui.display4, on_stream_end=lambda cam: self._on_camera_stream_end(4, cam))
             self.cam4.displayMode = displaymode
             if cameraNamePlace != '':
                 self.cam4.nameAndLocation = cameraNamePlace
@@ -526,6 +498,30 @@ class MWindow():
             self.mui.display4.setPixmap(QPixmap(asset_path('nosignal.png')))
         else:
             QMessageBox.about(self.mui, '错误', '窗口4并没有打开')
+
+    def _on_camera_stream_end(self, slot, cam_obj):
+        """
+        回调：摄像头流异常/结束时自动回收主窗口状态，避免“假忙碌”。
+        注意：这里只做状态回收，不直接操作UI控件，以降低线程边界风险。
+        """
+        global systemLock
+        runtime = self.ui_controller.get_slot_runtime(int(slot))
+        current_cam = getattr(self, runtime.camera_attr, None)
+        if current_cam is not cam_obj:
+            return
+        if cam_obj.url in self.cameraList:
+            self.cameraList.remove(cam_obj.url)
+        setattr(self, runtime.busy_attr, False)
+        label = getattr(self.mui, runtime.label_name, None)
+        if label is not None:
+            label.setPixmap(QPixmap(asset_path('nosignal.png')))
+        if cam_obj.url == 0 and systemLock == int(slot):
+            systemLock = 0
+            APP_SERVICE.state.system_lock_slot = 0
+        self._msg_bridge.show_message.emit(
+            '摄像头已断开',
+            f'窗口{slot}的视频流读取失败，系统已自动释放该摄像头。',
+        )
 
 class AddWindow():
 
@@ -807,6 +803,7 @@ class DelFaceWindow():
                 shutil.rmtree(candidate)
         totalUser = max([int(i) for i in userdic.keys()], default=0)
         faceSamples, idlists = _rebuild_face_training_data()
+        _sync_state_from_globals()
 
         tag1, tag2, tag3, tag4 = False, False, False, False
         remeurl1, remeurl2, remeurl3, remeurl4 = '', '', '', ''
@@ -848,16 +845,10 @@ class DelFaceWindow():
             if len(faceSamples) != len(idlists):
                 QMessageBox.about(self.ui, '错误', f'训练数据异常：样本数={len(faceSamples)}，标签数={len(idlists)}')
                 return
-            yml = 'model' + '/' + 'model' + '.yml'
-            if len(faceSamples) == 0:
-                if os.path.exists(yml):
-                    os.remove(yml)
-            else:
-                self.recog = cv2.face.LBPHFaceRecognizer_create()
-                # 初始化人脸识别算法
-                self.recog.train(faceSamples, np.array(idlists))
-                self.recog.write(yml)
-            _persist_user_training_config()
+            if not APP_SERVICE.rebuild_and_train():
+                QMessageBox.about(self.ui, '错误', '重建训练模型失败，请检查样本。')
+                return
+            _sync_globals_from_state()
         finally:
             '''
                         下面的代码是以前关闭摄像头的重启操作
@@ -1033,12 +1024,12 @@ class LuruWindow():
                     QMessageBox.about(self.ui, '错误', f'训练数据异常：样本数={len(faceSamples)}，标签数={len(idlists)}')
                     return
 
-                self.recog = cv2.face.LBPHFaceRecognizer_create()
-                self.recog.train(faceSamples, np.array(idlists))
-                yml = 'model' + '/' + 'model' + '.yml'
-                self.recog.write(yml)
+                _sync_state_from_globals()
+                if not APP_SERVICE.rebuild_and_train():
+                    QMessageBox.about(self.ui, '错误', '训练失败，请检查样本和模型环境。')
+                    return
+                _sync_globals_from_state()
                 totalUser = max([int(i) for i in userdic.keys()], default=0)
-                _persist_user_training_config()
             finally:
                 '''
                 下面的代码是以前关闭摄像头的重启操作
@@ -1155,44 +1146,14 @@ class ResetWindow():
         global userdic
         global idlists
         global faceSamples
+        APP_SERVICE.reset_face_data()
+        _sync_globals_from_state()
         userdic = {}
         totalUser = 0
         idlists = []
         faceSamples = []
-
         print('重置按钮已经按下，会清空人脸样本、模型和配置')
-        data_dir = 'data'
-        if os.path.isdir(data_dir):
-            for entry in os.listdir(data_dir):
-                entry_path = os.path.join(data_dir, entry)
-                if os.path.isdir(entry_path):
-                    shutil.rmtree(entry_path, ignore_errors=True)
-                elif os.path.isfile(entry_path):
-                    # 仅清理常见样本文件，保留 data 目录下的代码文件
-                    ext = os.path.splitext(entry)[1].lower()
-                    if ext in {'.jpg', '.jpeg', '.png', '.bmp', '.webp'}:
-                        try:
-                            os.remove(entry_path)
-                        except OSError:
-                            pass
-        else:
-            os.mkdir(data_dir)
-        shutil.rmtree('model')
-        os.mkdir('model')
         print('totalUser:', totalUser)
-
-        # 以下代码是对config文件夹下的文件的操作
-        f = open('config/idlists.txt', 'w')
-        f.write('')
-        f.close()
-
-        f = open('config/totalUser.txt', 'w')
-        f.write('0')
-        f.close()
-
-        f = open('config/userdic.txt', 'w')
-        f.write('')
-        f.close()
 
 
     def no(self):
@@ -1379,14 +1340,20 @@ class LogWindow():
 class Camera:
     '''摄像头对象'''
 
-    def __init__(self, url, outLabel):
+    def __init__(self, url, outLabel, on_stream_end=None):
         self.nameAndLocation = 'Test Video, No Location' # 记录摄像头的名称和地址
         self.displayMode = 0 # 记录摄像头的显示模式
         self.url = url
         self.outLabel = outLabel
+        self._on_stream_end = on_stream_end
         self._bridge = _LabelBridge(outLabel)
         self._running = True
         self.cap = cv2.VideoCapture(self.url)
+        self._frame_queue = Queue(maxsize=3)
+        self._reader_thread = None
+        self._reader_started = False
+        self._stream_end_sentinel = object()
+        self._frame_timeout_sentinel = object()
         self.detector = cv2.CascadeClassifier(asset_path('haarcascade_frontalface_default.xml'))
         self.recognizer = cv2.face.LBPHFaceRecognizer_create()
         self._pil_font = self._load_pil_font(28)
@@ -1397,6 +1364,48 @@ class Camera:
             self.emotion = EmotionRecognitionService()
         except Exception as exc:
             print('情绪识别服务不可用，已回退为中性：', exc)
+
+    def _start_frame_reader(self):
+        if self._reader_started:
+            return
+        self._reader_started = True
+        self._reader_thread = threading.Thread(target=self._reader_loop, daemon=True)
+        self._reader_thread.start()
+
+    def _reader_loop(self):
+        while self._running and self.cap.isOpened():
+            ok, frame = self.cap.read()
+            if not ok:
+                try:
+                    self._frame_queue.put_nowait(self._stream_end_sentinel)
+                except Full:
+                    pass
+                break
+            try:
+                self._frame_queue.put(frame, timeout=0.1)
+            except Full:
+                # Drop oldest frame to keep latency bounded.
+                try:
+                    _ = self._frame_queue.get_nowait()
+                except Empty:
+                    pass
+                try:
+                    self._frame_queue.put_nowait(frame)
+                except Full:
+                    pass
+
+    def _get_frame(self):
+        try:
+            return self._frame_queue.get(timeout=0.3)
+        except Empty:
+            return self._frame_timeout_sentinel
+
+    def _notify_stream_end(self):
+        if callable(self._on_stream_end):
+            try:
+                self._on_stream_end(self)
+            except Exception:
+                pass
 
     @staticmethod
     def _load_pil_font(size=28):
@@ -1459,15 +1468,24 @@ class Camera:
         if os.path.exists('model/model.yml'):  # 表示为已经录入过人脸了，可以进行人脸识别操作了
             yml = 'model' + '/' + 'model.yml'
             self.recognizer.read(yml)
+        self._start_frame_reader()
         '''
         yml文件比较大，避免反复的读取操作是必须的
         '''
         while self._running and self.cap.isOpened():
             while self._running:
-                success, frame = self.cap.read()
+                frame = self._get_frame()
                 if not self._running:
                     break
-                if success:
+                if frame is self._frame_timeout_sentinel:
+                    continue
+                if frame is self._stream_end_sentinel:
+                    self.cap.release()
+                    self._emit_no_signal()
+                    self._notify_stream_end()
+                    print('released!')
+                    break
+                if frame is not None:
                     frame_people = []
                     rawframe = cv2.resize(frame, (640, 360))
                     # cv2.imshow('raw', frame)
@@ -1587,11 +1605,6 @@ class Camera:
                     # 人脸计数代码区--------
 
                     cv2.waitKey(10)
-                else:
-                    self.cap.release()
-                    self._emit_no_signal()
-                    print('released!')
-                    break
             if not self._running:
                 break
 
@@ -1599,12 +1612,21 @@ class Camera:
         '''
         只进行人脸检测的版本
         '''
+        self._start_frame_reader()
         while self._running and self.cap.isOpened():
             while self._running:
-                success, frame = self.cap.read()
+                frame = self._get_frame()
                 if not self._running:
                     break
-                if success:
+                if frame is self._frame_timeout_sentinel:
+                    continue
+                if frame is self._stream_end_sentinel:
+                    self.cap.release()
+                    self._emit_no_signal()
+                    self._notify_stream_end()
+                    print('released!')
+                    break
+                if frame is not None:
                     rawframe = cv2.resize(frame, (640, 360))
                     # cv2.imshow('raw', frame)
                     frame = cv2.cvtColor(rawframe, cv2.COLOR_BGR2GRAY)
@@ -1630,11 +1652,6 @@ class Camera:
                         break
                     self._emit_frame(rawframe)
                     cv2.waitKey(10)
-                else:
-                    self.cap.release()
-                    self._emit_no_signal()
-                    print('released!')
-                    break
             if not self._running:
                 break
 
@@ -1642,12 +1659,21 @@ class Camera:
         '''
         displayJustdisplayBrand是只进行播放视频帧的版本 没有人脸检测和人脸识别
         '''
+        self._start_frame_reader()
         while self._running and self.cap.isOpened():
             while self._running:
-                success, frame = self.cap.read()
+                frame = self._get_frame()
                 if not self._running:
                     break
-                if success:
+                if frame is self._frame_timeout_sentinel:
+                    continue
+                if frame is self._stream_end_sentinel:
+                    self.cap.release()
+                    self._emit_no_signal()
+                    self._notify_stream_end()
+                    print('released!')
+                    break
+                if frame is not None:
                     rawframe = cv2.resize(frame, (640, 360))
                     rawframe = self._draw_text(
                         rawframe,
@@ -1662,11 +1688,6 @@ class Camera:
                         break
                     self._emit_frame(rawframe)
                     cv2.waitKey(10)
-                else:
-                    self.cap.release()
-                    self._emit_no_signal()
-                    print('released!')
-                    break
             if not self._running:
                 break
 
@@ -1675,12 +1696,21 @@ class Camera:
         displayLuruBrand是Camera对象针对录入界面的定制版本，没有实时的人脸识别以及
         识别文字表示功能，更符合录入界面的应用场景需要
         '''
+        self._start_frame_reader()
         while self._running and self.cap.isOpened():
             while self._running:
-                success, frame = self.cap.read()
+                frame = self._get_frame()
                 if not self._running:
                     break
-                if success:
+                if frame is self._frame_timeout_sentinel:
+                    continue
+                if frame is self._stream_end_sentinel:
+                    self.cap.release()
+                    self._emit_no_signal()
+                    self._notify_stream_end()
+                    print('released!')
+                    break
+                if frame is not None:
                     rawframe = cv2.resize(frame, (640, 360))
                     # cv2.imshow('raw', frame)
                     frame = cv2.cvtColor(rawframe, cv2.COLOR_BGR2GRAY)
@@ -1706,11 +1736,6 @@ class Camera:
                         break
                     self._emit_frame(rawframe)
                     cv2.waitKey(10)
-                else:
-                    self.cap.release()
-                    self._emit_no_signal()
-                    print('released!')
-                    break
             if not self._running:
                 break
 
@@ -1721,6 +1746,8 @@ class Camera:
             systemLock = 0  # 解锁
         if self.cap is not None:
             self.cap.release()
+        if self._reader_thread is not None and self._reader_thread.is_alive():
+            self._reader_thread.join(timeout=0.5)
         # Ensure the last frame cannot remain visible after stream shutdown.
         self._emit_no_signal()
 

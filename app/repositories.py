@@ -96,6 +96,9 @@ class DataRepository:
             return name_dir
         return None
 
+    def user_dir_path(self, username: str) -> Path:
+        return self.data_dir / str(username)
+
     def iter_user_image_paths(self, user_id: int, username: str):
         user_dir = self.resolve_user_dir(user_id, username)
         if user_dir is None:
@@ -107,6 +110,42 @@ class DataRepository:
     def ensure(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.model_dir.mkdir(parents=True, exist_ok=True)
+
+    def _remove_tree(self, path: Path) -> None:
+        if not path.is_dir():
+            return
+        for root, dirs, files in os.walk(path, topdown=False):
+            for f in files:
+                try:
+                    Path(root, f).unlink()
+                except OSError:
+                    pass
+            for d in dirs:
+                try:
+                    Path(root, d).rmdir()
+                except OSError:
+                    pass
+        try:
+            path.rmdir()
+        except OSError:
+            pass
+
+    def user_dir_exists(self, username: str) -> bool:
+        return self.user_dir_path(username).is_dir()
+
+    def recreate_user_dir(self, username: str) -> Path:
+        path = self.user_dir_path(username)
+        if path.exists():
+            self._remove_tree(path)
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def remove_user_dirs(self, username: str, user_id: int | None = None) -> None:
+        candidates: list[Path] = [self.data_dir / str(username)]
+        if user_id is not None:
+            candidates.append(self.data_dir / str(user_id))
+        for candidate in candidates:
+            self._remove_tree(candidate)
 
     def clear_face_data_keep_py(self) -> None:
         if self.data_dir.is_dir():
@@ -146,6 +185,12 @@ class DataRepository:
         else:
             self.model_dir.mkdir(parents=True, exist_ok=True)
 
+    def model_file_path(self) -> Path:
+        return self.model_dir / "model.yml"
+
+    def model_exists(self) -> bool:
+        return self.model_file_path().exists()
+
 
 class SqlRepository:
     """Unified DB repository for accounts, logs, attendance and model metadata."""
@@ -164,6 +209,13 @@ class SqlRepository:
 
     def get_all_accounts(self) -> list[tuple[str]]:
         return self.db.getAllaccount()
+
+    def refresh_connection(self) -> None:
+        try:
+            self.db.dbclose()
+        except Exception:
+            pass
+        self.db = sqls.SqlF()
 
     def save_recognition_event(
         self,
@@ -226,6 +278,15 @@ class SqlRepository:
             attendance_type=attendance_type,
             status=status,
         )
+
+    def get_all_names(self):
+        return self.db.getAllname()
+
+    def get_all_places(self):
+        return self.db.getAllplace()
+
+    def reset_logs(self) -> bool:
+        return bool(self.db.resetDB())
 
     def save_model_metadata(self, name: str, feature_path: str, label: int | None = None) -> bool:
         return self.db.saveFaceFeature(name, {"label": label, "feature_path": feature_path})

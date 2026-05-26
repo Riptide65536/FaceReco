@@ -70,6 +70,38 @@
        <property name="leftMargin"><number>15</number></property>
        <property name="rightMargin"><number>15</number></property>
        <item>
+        <widget class="QLabel" name="mainBackendHint">
+         <property name="minimumSize">
+          <size>
+           <width>240</width>
+           <height>0</height>
+          </size>
+         </property>
+         <property name="font">
+          <font>
+           <family>Microsoft YaHei UI</family>
+           <pointsize>10</pointsize>
+          </font>
+         </property>
+         <property name="styleSheet">
+          <string notr="true">QLabel {
+background:#eef4ff;
+color:#1f3f7a;
+border:1px solid #c9dafc;
+border-radius:8px;
+padding:4px 8px;
+font-weight:600;
+}</string>
+         </property>
+         <property name="text">
+          <string>当前识别后端：初始化中</string>
+         </property>
+         <property name="alignment">
+          <set>Qt::AlignCenter</set>
+         </property>
+        </widget>
+       </item>
+       <item>
         <widget class="QPushButton" name="addButton">
          <property name="font"><font><family>Microsoft YaHei UI</family><pointsize>11</pointsize></font></property>
          <property name="text"><string>添加摄像头</string></property>

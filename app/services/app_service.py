@@ -42,6 +42,10 @@ class AppService:
             self.state.update_user_stats()
             self.persist_training_state()
             return len(samples) >= 0
+        if not self.pipeline.ensure_face_service_ready():
+            self.state.update_user_stats()
+            self.persist_training_state()
+            return False
         if len(samples) == 0:
             model_path = self.data_repo.model_file_path()
             if model_path.exists():

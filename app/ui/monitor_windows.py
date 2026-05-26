@@ -16,6 +16,7 @@ _CTX = {
     "default_ui_font": None,
     "app_stylesheet": "",
 }
+_DEBUG_VERBOSE = os.getenv("FACE_RECO_VERBOSE", "0") == "1"
 
 def configure(app_service, default_ui_font, app_stylesheet):
     _CTX["app_service"] = app_service
@@ -73,6 +74,7 @@ class MWindow():
         self.mui.pushButtonSaveConfig.clicked.connect(self.saveconfig)
         self.ui_controller = MainUIController(self)
         self._main_pending_label = None
+        self._backend_mode_label = None
         self._pending_notice_shown = False
         self._operation_group_title_base = self.mui.groupBox.title() if hasattr(self.mui, 'groupBox') else '操作区'
         self._luru_button_base_text = self.mui.luruButton.text()
@@ -96,7 +98,9 @@ class MWindow():
 
         ######### ↑↑↑以上代码为显示初始化过程 ########
         self._init_main_pending_hint()
+        self._init_backend_mode_hint()
         self.refresh_model_pending_hint()
+        self.refresh_backend_mode_hint()
         self._show_pending_startup_notice()
 
     def _init_main_pending_hint(self):
@@ -116,6 +120,45 @@ class MWindow():
         )
         self._main_pending_label.setGeometry(420, 850, 1440, 26)
         self._main_pending_label.hide()
+
+    def _init_backend_mode_hint(self):
+        if hasattr(self.mui, 'mainBackendHint'):
+            self._backend_mode_label = self.mui.mainBackendHint
+            print('backend hint widget loaded from ui:', self._backend_mode_label is not None)
+            self._backend_mode_label.show()
+            return
+        parent = self.mui.groupBox if hasattr(self.mui, 'groupBox') else self.mui
+        self._backend_mode_label = QLabel(parent)
+        self._backend_mode_label.setObjectName('mainBackendHint')
+        self._backend_mode_label.setAlignment(Qt.AlignCenter)
+        self._backend_mode_label.setStyleSheet(
+            'QLabel#mainBackendHint {'
+            'background:#eef4ff; color:#1f3f7a; border:1px solid #c9dafc; border-radius:8px; padding:6px 10px; font-weight:600; }'
+        )
+        if parent is self.mui:
+            self._backend_mode_label.setGeometry(420, 820, 480, 26)
+        else:
+            self._backend_mode_label.setGeometry(18, 24, max(260, parent.width() - 36), 24)
+        self._backend_mode_label.show()
+        self._backend_mode_label.raise_()
+
+    def refresh_backend_mode_hint(self):
+        if self._backend_mode_label is None:
+            return
+        if self._backend_mode_label.parent() is self.mui.groupBox and self._backend_mode_label.objectName() != 'mainBackendHint':
+            self._backend_mode_label.setGeometry(18, 24, max(260, self.mui.groupBox.width() - 36), 24)
+        mode = _app_service().pipeline.current_backend_mode()
+        mode_map = {
+            'deep': '深度模型',
+            'lbph': 'LBPH（降级）',
+            'lite': 'Lite（应急降级）',
+            'unavailable': '不可用',
+            'unknown': '未知',
+        }
+        text = mode_map.get(mode, str(mode))
+        self._backend_mode_label.setText(f'当前识别后端：{text}')
+        self._backend_mode_label.show()
+        self._backend_mode_label.raise_()
 
     def refresh_model_pending_hint(self):
         if self._main_pending_label is None:
@@ -204,24 +247,28 @@ class MWindow():
         QMessageBox.about(self.mui, '保存成功', '下次启动时会采用此次配置')
 
     def delcam(self):
-        print('function of del camera'
-              '显示删除摄像头的界面 显示需要删除的摄像头的链接')
+        if _DEBUG_VERBOSE:
+            print('function of del camera'
+                  '显示删除摄像头的界面 显示需要删除的摄像头的链接')
         self.addwin = DelWindow(self)
         self.addwin.ui.show()
 
     def addcam(self):
-        print('function of add camera'
-              '显示添加摄像头的界面 显示需要添加的摄像头的链接')
+        if _DEBUG_VERBOSE:
+            print('function of add camera'
+                  '显示添加摄像头的界面 显示需要添加的摄像头的链接')
         self.addwin = AddWindow(self)
         self.addwin.ui.show()
 
     def luru(self):
-        print('function of luru face'
-              '显示人脸录入界面 这里需要系统锁 人脸录入的优先级比display的优先级高')
+        if _DEBUG_VERBOSE:
+            print('function of luru face'
+                  '显示人脸录入界面 这里需要系统锁 人脸录入的优先级比display的优先级高')
         self.luruwin = LuruWindow(self)
         self.luruwin.ui.setWindowFlags(Qt.CustomizeWindowHint)
         self.luruwin.ui.show()
         self.luruwin.ui.destroyed.connect(lambda *_: self.refresh_model_pending_hint())
+        self.luruwin.ui.destroyed.connect(lambda *_: self.refresh_backend_mode_hint())
 
     def log(self):
         print('function of inquiry log')
@@ -384,8 +431,9 @@ class AddWindow():
             cam.nameAndLocation = name_place_text or 'Test Camera, Test Location'
 
     def ok(self):
-        print('push the ok button')
-        print(self.ui.comboBox.currentText())
+        if _DEBUG_VERBOSE:
+            print('push the ok button')
+            print(self.ui.comboBox.currentText())
 
         if self.ui.comboBox.currentText() == '':
             QMessageBox.about(self.ui, '错误', '请在组合选择框中选择内容')
@@ -401,11 +449,13 @@ class AddWindow():
                 return
 
             cam_url = self.ui.lineEdit.text()
-            print(type(cam_url))
+            if _DEBUG_VERBOSE:
+                print(type(cam_url))
             if cam_url.isdigit():
                 cam_url = int(cam_url)
             else:
-                print(type(cam_url))
+                if _DEBUG_VERBOSE:
+                    print(type(cam_url))
             self._start_slot(
                 slot_map[slot_text],
                 cam_url,
@@ -414,7 +464,8 @@ class AddWindow():
             )
 
     def cancel(self):
-        print('push the cancel button')
+        if _DEBUG_VERBOSE:
+            print('push the cancel button')
 
 
 class DelWindow():
@@ -428,8 +479,9 @@ class DelWindow():
         self.ui.buttonBox.rejected.connect(self.cancel)
 
     def ok(self):
-        print('push the ok button')
-        print(self.ui.comboBox.currentText())
+        if _DEBUG_VERBOSE:
+            print('push the ok button')
+            print(self.ui.comboBox.currentText())
 
         if self.ui.comboBox.currentText() == '':
             QMessageBox.about(self.ui, '错误', '请在组合选择框中选择试图关闭的窗口')
@@ -443,7 +495,8 @@ class DelWindow():
             getattr(self.main_window, f'close{slot}')()
 
     def cancel(self):
-        print('push the cancel button')
+        if _DEBUG_VERBOSE:
+            print('push the cancel button')
 
 class DelFaceWindow():
 
@@ -531,7 +584,7 @@ class LuruWindow():
                 self.integratedDisplaymode = self.main_window.cam1.displayMode
                 self.main_window.close1()
                 _app_service().state.system_lock_slot = 1
-                self.lurucam = Camera(0, self.ui.lurudisplay, _app_service())
+                self.lurucam = Camera(0, self.ui.lurudisplay, _app_service(), prefer_haar_detector=True)
                 self.luruThread = threading.Thread(target=self.lurucam.displayLuruBrand, daemon=True)
                 # self.luruThread.setDaemon(True)
                 self.luruThread.start()
@@ -540,7 +593,7 @@ class LuruWindow():
                 self.integratedDisplaymode = self.main_window.cam2.displayMode
                 self.main_window.close2()
                 _app_service().state.system_lock_slot = 2
-                self.lurucam = Camera(0, self.ui.lurudisplay, _app_service())
+                self.lurucam = Camera(0, self.ui.lurudisplay, _app_service(), prefer_haar_detector=True)
                 self.luruThread = threading.Thread(target=self.lurucam.displayLuruBrand, daemon=True)
                 # self.luruThread.setDaemon(True)
                 self.luruThread.start()
@@ -549,7 +602,7 @@ class LuruWindow():
                 self.integratedDisplaymode = self.main_window.cam3.displayMode
                 self.main_window.close3()
                 _app_service().state.system_lock_slot = 3
-                self.lurucam = Camera(0, self.ui.lurudisplay, _app_service())
+                self.lurucam = Camera(0, self.ui.lurudisplay, _app_service(), prefer_haar_detector=True)
                 self.luruThread = threading.Thread(target=self.lurucam.displayLuruBrand, daemon=True)
                 # self.luruThread.setDaemon(True)
                 self.luruThread.start()
@@ -558,14 +611,14 @@ class LuruWindow():
                 self.integratedDisplaymode = self.main_window.cam4.displayMode
                 self.main_window.close4()
                 _app_service().state.system_lock_slot = 4
-                self.lurucam = Camera(0, self.ui.lurudisplay, _app_service())
+                self.lurucam = Camera(0, self.ui.lurudisplay, _app_service(), prefer_haar_detector=True)
                 self.luruThread = threading.Thread(target=self.lurucam.displayLuruBrand, daemon=True)
                 # self.luruThread.setDaemon(True)
                 self.luruThread.start()
 
         if _app_service().state.system_lock_slot == 0:
             _app_service().state.system_lock_slot = 55
-            self.lurucam = Camera(0, self.ui.lurudisplay, _app_service())
+            self.lurucam = Camera(0, self.ui.lurudisplay, _app_service(), prefer_haar_detector=True)
             self.luruThread = threading.Thread(target=self.lurucam.displayLuruBrand, daemon=True)
             # self.luruThread.setDaemon(True)
             self.luruThread.start()
@@ -580,6 +633,23 @@ class LuruWindow():
         self.resetwin.ui.show()
 
     def _refresh_capture_status_label(self):
+        ready = _app_service().pipeline.ensure_face_service_ready()
+        reason = _app_service().pipeline.face_service_error_text()
+        backend_mode = _app_service().pipeline.current_backend_mode()
+        if ready:
+            self.ui.pushButton3.setEnabled(True)
+            if backend_mode == 'lbph':
+                self.ui.pushButton3.setToolTip('当前为 LBPH 降级模式：可正常更新模型，识别精度低于深度模型。')
+            elif backend_mode == 'lite':
+                self.ui.pushButton3.setToolTip('当前为 Lite 应急模式：可正常更新模型，识别精度低于深度/LBPH。')
+            else:
+                self.ui.pushButton3.setToolTip('')
+        else:
+            self.ui.pushButton3.setEnabled(True)
+            self.ui.pushButton3.setToolTip(
+                '当前环境不支持更新模型，请先安装 insightface + onnxruntime。'
+                + (f'\n原因：{reason}' if reason else '')
+            )
         if self._model_pending:
             self.ui.pushButton3.setText('更新模型')
             self.ui.setWindowTitle('录入人脸（模型待更新）')
@@ -695,9 +765,30 @@ class LuruWindow():
             progress.setLabelText('步骤 2/4：训练并写入模型...')
             progress.setValue(2)
             QApplication.processEvents()
+            if not _app_service().pipeline.ensure_face_service_ready():
+                reason = _app_service().pipeline.face_service_error_text() or '深度识别依赖未安装'
+                QMessageBox.about(
+                    self.ui,
+                    '环境未就绪',
+                    '当前环境不支持更新模型。\n'
+                    '请先安装深度识别依赖后再重试：\n'
+                    'insightface、onnxruntime（情绪识别还需 tensorflow）\n\n'
+                    f'详细原因：{reason}',
+                )
+                return False
+            backend_mode = _app_service().pipeline.current_backend_mode()
+            if backend_mode == 'lbph':
+                progress.setLabelText('步骤 2/4：训练并写入模型（LBPH降级模式）...')
+            elif backend_mode == 'lite':
+                progress.setLabelText('步骤 2/4：训练并写入模型（Lite应急模式）...')
+                QApplication.processEvents()
             ok = _app_service().rebuild_and_train()
             if not ok:
-                QMessageBox.about(self.ui, '错误', '模型更新失败，请检查样本和模型环境。')
+                detail = _app_service().pipeline.last_train_error_text()
+                if detail:
+                    QMessageBox.about(self.ui, '错误', f'模型更新失败，请检查样本和模型环境。\n\n详细原因：{detail}')
+                else:
+                    QMessageBox.about(self.ui, '错误', '模型更新失败，请检查样本和模型环境。')
                 return False
 
             progress.setLabelText('步骤 3/4：刷新状态...')
@@ -802,14 +893,16 @@ class LuruWindow():
         print('正在从摄像头录入新的人脸信息\n' * 3)
         self.sampleNum = 0
         self._capture_running = True
+        self.ui.pushButton.setText(f'正在采集中 0/{self.maxSampleNum}')
 
         if hasattr(self, 'lurucam') and self.lurucam is not None:
             self.lurucam.close(release_system_lock=False)
             self.lurucam = None
 
-        self.lurucamReal = Camera(0, self.ui.lurudisplay, _app_service())
+        self.lurucamReal = Camera(0, self.ui.lurudisplay, _app_service(), prefer_haar_detector=True)
         if not self.lurucamReal.cap.isOpened():
             self._capture_running = False
+            self.ui.pushButton.setText('拍摄')
             QMessageBox.about(self.ui, '错误', '摄像头未打开，无法进行拍摄。')
             return
         self.luruThreadReal = threading.Thread(target=self.getNewFaceDisplay, daemon=True)
@@ -818,19 +911,40 @@ class LuruWindow():
     def getNewFaceDisplay(self):
         print('人脸捕捉新线程已经开启' * 5)
         captured_any = False
+        start_ts = time.time()
+        last_face_ts = start_ts
+        capture_timeout_sec = 20.0
+        no_face_timeout_sec = 6.0
+        finished_reason = '未检测到人脸，请调整位置后重试。'
         while (
             hasattr(self, 'lurucamReal')
             and self.lurucamReal._running
             and self.lurucamReal.cap.isOpened()
             and self.sampleNum < self.maxSampleNum
         ):
+            now_ts = time.time()
+            if (now_ts - start_ts) > capture_timeout_sec:
+                if captured_any:
+                    finished_reason = '采集超时，已保存当前样本，建议补足后更新模型。'
+                else:
+                    finished_reason = '采集超时且未检测到人脸，请调整位置后重试。'
+                break
+            if (now_ts - last_face_ts) > no_face_timeout_sec and (not captured_any):
+                finished_reason = '长时间未检测到人脸，请调整角度/光照后重试。'
+                break
+
             success, frame = self.lurucamReal.cap.read()
             if not success:
+                finished_reason = '摄像头读取失败，请重试。'
                 break
 
             rawframe = cv2.resize(frame, (640, 360))
             frame = cv2.cvtColor(rawframe, cv2.COLOR_BGR2GRAY)
             self.faces = self.lurucamReal.detector.detectMultiScale(frame, 1.3, 5)
+            if not isinstance(self.faces, list):
+                self.faces = list(self.faces)
+            if len(self.faces) > 0:
+                last_face_ts = time.time()
 
             for (x, y, w, h) in self.faces:
                 if self.sampleNum >= self.maxSampleNum:
@@ -848,7 +962,7 @@ class LuruWindow():
 
             rawframe = cv2.cvtColor(rawframe, cv2.COLOR_BGR2RGB)
             self.lurucamReal._emit_frame(rawframe)
-            cv2.waitKey(10)
+            time.sleep(0.01)
 
         if hasattr(self, 'lurucamReal') and self.lurucamReal is not None:
             self.lurucamReal.close(release_system_lock=False)
@@ -859,9 +973,9 @@ class LuruWindow():
         if self.sampleNum >= self.maxSampleNum:
             self._enroll_bridge.capture_finished.emit(True, self.sampleNum, '采集完成，请更新模型。')
         elif captured_any:
-            self._enroll_bridge.capture_finished.emit(True, self.sampleNum, '采集已停止，建议补足样本后更新模型。')
+            self._enroll_bridge.capture_finished.emit(True, self.sampleNum, finished_reason)
         else:
-            self._enroll_bridge.capture_finished.emit(False, self.sampleNum, '未检测到人脸，请调整位置后重试。')
+            self._enroll_bridge.capture_finished.emit(False, self.sampleNum, finished_reason)
 
     def _on_capture_progress(self, captured, max_count):
         self.ui.pushButton.setText(f'拍摄中 {captured}/{max_count}')
@@ -879,7 +993,7 @@ class LuruWindow():
     def _start_luru_preview(self):
         if hasattr(self, 'lurucam') and self.lurucam is not None and self.lurucam._running:
             return
-        self.lurucam = Camera(0, self.ui.lurudisplay, _app_service())
+        self.lurucam = Camera(0, self.ui.lurudisplay, _app_service(), prefer_haar_detector=True)
         if not self.lurucam.cap.isOpened():
             QMessageBox.about(self.ui, '错误', '摄像头预览恢复失败，请检查设备。')
             return

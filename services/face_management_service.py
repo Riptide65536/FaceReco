@@ -8,6 +8,7 @@ from typing import Optional
 import numpy as np
 from PIL import Image
 
+from paths import CONFIG_DIR, FACE_DATA_DIR, MODEL_DIR
 from services.face_recognition_service import FaceRecognitionService
 
 
@@ -16,9 +17,9 @@ class FaceManagementService:
 
     def __init__(
         self,
-        data_dir: str = "data",
-        config_dir: str = "config",
-        model_path: str = "model/model.yml",
+        data_dir: str = str(FACE_DATA_DIR),
+        config_dir: str = str(CONFIG_DIR),
+        model_path: str = str(Path(MODEL_DIR) / "model.yml"),
     ) -> None:
         self.data_dir = Path(data_dir)
         self.config_dir = Path(config_dir)

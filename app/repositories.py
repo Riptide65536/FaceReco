@@ -7,12 +7,13 @@ from typing import Any
 import datetime as dt
 
 import sqls
+from paths import CONFIG_DIR, FACE_DATA_DIR, MODEL_DIR
 
 
 class ConfigRepository:
     """Read/write legacy txt configs used by existing UI files."""
 
-    def __init__(self, config_dir: str = "config") -> None:
+    def __init__(self, config_dir: str | Path = CONFIG_DIR) -> None:
         self.config_dir = Path(config_dir)
 
     def _read_lines(self, name: str) -> list[str]:
@@ -83,7 +84,7 @@ class ConfigRepository:
 class DataRepository:
     """File-system level helpers for face-data and model files."""
 
-    def __init__(self, data_dir: str = "data", model_dir: str = "model") -> None:
+    def __init__(self, data_dir: str | Path = FACE_DATA_DIR, model_dir: str | Path = MODEL_DIR) -> None:
         self.data_dir = Path(data_dir)
         self.model_dir = Path(model_dir)
 
@@ -190,6 +191,37 @@ class DataRepository:
 
     def model_exists(self) -> bool:
         return self.model_file_path().exists()
+
+    def _model_pending_flag_path(self) -> Path:
+        return self.model_dir / "pending_update.flag"
+
+    def mark_model_pending(self) -> None:
+        self.model_dir.mkdir(parents=True, exist_ok=True)
+        self._model_pending_flag_path().write_text("pending", encoding="utf-8")
+
+    def clear_model_pending(self) -> None:
+        flag = self._model_pending_flag_path()
+        if flag.exists():
+            try:
+                flag.unlink()
+            except OSError:
+                pass
+
+    def has_any_samples(self) -> bool:
+        if not self.data_dir.exists():
+            return False
+        allowed = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+        for path in self.data_dir.rglob("*"):
+            if path.is_file() and path.suffix.lower() in allowed:
+                return True
+        return False
+
+    def is_model_pending(self) -> bool:
+        if self._model_pending_flag_path().exists():
+            return True
+        if self.has_any_samples() and (not self.model_exists()):
+            return True
+        return False
 
 
 class SqlRepository:

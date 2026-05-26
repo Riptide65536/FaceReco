@@ -1,10 +1,10 @@
 ﻿from __future__ import annotations
 
-from PySide2.QtWidgets import QMessageBox
+from PySide2.QtWidgets import QMessageBox, QProgressDialog, QInputDialog, QApplication, QLabel
 from PySide2.QtUiTools import QUiLoader
 from PySide2.QtGui import QPixmap
 from PySide2.QtCore import Qt, QObject, Signal
-import cv2, threading, os, shutil
+import cv2, threading, os, shutil, re, time
 import ast
 from paths import asset_path, ui_path
 from app.ui_controller import MainUIController
@@ -45,6 +45,11 @@ class _MessageBridge(QObject):
     def _show_impl(self, title, text):
         QMessageBox.about(self._parent_widget, title, text)
 
+
+class _EnrollBridge(QObject):
+    capture_progress = Signal(int, int)
+    capture_finished = Signal(bool, int, str)
+
 def _rebuild_face_training_data():
     app_service = _app_service()
     return app_service.pipeline.rebuild_training_data(app_service.data_repo)
@@ -67,6 +72,11 @@ class MWindow():
         self.mui.logButton.clicked.connect(self.log)
         self.mui.pushButtonSaveConfig.clicked.connect(self.saveconfig)
         self.ui_controller = MainUIController(self)
+        self._main_pending_label = None
+        self._pending_notice_shown = False
+        self._operation_group_title_base = self.mui.groupBox.title() if hasattr(self.mui, 'groupBox') else '操作区'
+        self._luru_button_base_text = self.mui.luruButton.text()
+        self._luru_button_base_style = self.mui.luruButton.styleSheet()
 
         self.busy1, self.busy2, self.busy3, self.busy4 = False, False, False, False
         self.cameraList = [] # 记录已经获取的摄像头 避免同一个摄像头重复获取
@@ -85,6 +95,63 @@ class MWindow():
             return
 
         ######### ↑↑↑以上代码为显示初始化过程 ########
+        self._init_main_pending_hint()
+        self.refresh_model_pending_hint()
+        self._show_pending_startup_notice()
+
+    def _init_main_pending_hint(self):
+        if hasattr(self.mui, 'mainPendingHint'):
+            self._main_pending_label = self.mui.mainPendingHint
+            self._main_pending_label.hide()
+            return
+        parent = self.mui
+        self._main_pending_label = QLabel(parent)
+        self._main_pending_label.setObjectName('mainPendingHint')
+        self._main_pending_label.setText('模型待更新：请进入“录入人脸及管理”，点击“更新模型”。')
+        self._main_pending_label.setAlignment(Qt.AlignCenter)
+        self._main_pending_label.setWordWrap(True)
+        self._main_pending_label.setStyleSheet(
+            'QLabel#mainPendingHint {'
+            'background:#fff5f5; color:#a61b1b; border:1px solid #f2b8b8; border-radius:8px; padding:6px 10px; font-weight:600; }'
+        )
+        self._main_pending_label.setGeometry(420, 850, 1440, 26)
+        self._main_pending_label.hide()
+
+    def refresh_model_pending_hint(self):
+        if self._main_pending_label is None:
+            return
+        is_pending = _app_service().is_model_pending()
+        print('model pending status:', is_pending)
+        if is_pending:
+            self._main_pending_label.show()
+            self._main_pending_label.raise_()
+            if hasattr(self.mui, 'groupBox'):
+                self.mui.groupBox.setTitle(f'{self._operation_group_title_base}（模型待更新）')
+            self.mui.luruButton.setText('⚠ 录入人脸及管理')
+            self.mui.luruButton.setToolTip('模型待更新：请进入录入窗口后点击“更新模型”。')
+            self.mui.luruButton.setStyleSheet(
+                self._luru_button_base_style
+                + 'QPushButton{border:1px solid #e2a4a4; background:#fff5f5; color:#8a1f1f; font-weight:700;}'
+                + 'QPushButton:hover{background:#ffeaea;}'
+            )
+        else:
+            self._main_pending_label.hide()
+            if hasattr(self.mui, 'groupBox'):
+                self.mui.groupBox.setTitle(self._operation_group_title_base)
+            self.mui.luruButton.setText(self._luru_button_base_text)
+            self.mui.luruButton.setToolTip('')
+            self.mui.luruButton.setStyleSheet(self._luru_button_base_style)
+
+    def _show_pending_startup_notice(self):
+        if self._pending_notice_shown:
+            return
+        if _app_service().is_model_pending():
+            self._pending_notice_shown = True
+            QMessageBox.about(
+                self.mui,
+                '模型待更新',
+                '当前模型不是最新状态。\n请进入“录入人脸及管理”，点击“更新模型”。',
+            )
 
     def _initialize_display_configs(self):
         for slot in (1, 2, 3, 4):
@@ -154,6 +221,7 @@ class MWindow():
         self.luruwin = LuruWindow(self)
         self.luruwin.ui.setWindowFlags(Qt.CustomizeWindowHint)
         self.luruwin.ui.show()
+        self.luruwin.ui.destroyed.connect(lambda *_: self.refresh_model_pending_hint())
 
     def log(self):
         print('function of inquiry log')
@@ -396,15 +464,15 @@ class DelFaceWindow():
         if faceTodel == '':
             QMessageBox.about(self.ui, '错误', '未选择需要删除的人脸')
             return
-
-        snapshots = self.main_window.capture_busy_slots()
-        self.main_window.close_slots_from_snapshots(snapshots)
+        if not _app_service().delete_user_only(faceTodel):
+            QMessageBox.about(self.ui, '错误', '删除失败，请重试。')
+            return
+        QMessageBox.about(self.ui, '完成', '已删除目标人脸样本，模型待更新。')
         try:
-            if not _app_service().delete_user_and_rebuild(faceTodel):
-                QMessageBox.about(self.ui, '错误', '重建训练模型失败，请检查样本。')
-                return
-        finally:
-            self.main_window.restore_slots_from_snapshots(snapshots)
+            if hasattr(self.main_window, 'luruwin') and self.main_window.luruwin is not None:
+                self.main_window.luruwin._mark_model_pending_ui()
+        except Exception:
+            pass
 
     def cancel(self):
         print('push the cancel button')
@@ -420,6 +488,7 @@ class LuruWindow():
         self.ui.setFixedSize(self.ui.width(), self.ui.height())
 
         self.ui.lurudisplay2.setPixmap(QPixmap(asset_path('avatar.png')))
+        self.ui.pushButton3.setText('更新模型')
 
         self.ui.pushButton2.clicked.connect(self.closeQuit)
         self.ui.pushButton.clicked.connect(self.snap)
@@ -431,6 +500,28 @@ class LuruWindow():
         self.integratedNamePlace = '' # 记录集成摄像头的名称和地点 以便于后续重启的设置
         self.integratedDisplaymode = 0 # 记录集成摄像头的显示模式
         self._restore_done = False
+        self.sampleNum = 0
+        self.maxSampleNum = 20
+        self._capture_running = False
+        self._is_training = False
+        self._model_pending = _app_service().is_model_pending()
+        self.current_username = ''
+        self._pending_status_base_text = '请不要遮挡人脸(•̀ ω •́ )\n录入完成会自行退出^_^ \n耐心等待'
+        self._capture_write_index = 1
+        self._enroll_bridge = _EnrollBridge()
+        self._enroll_bridge.capture_progress.connect(self._on_capture_progress, Qt.QueuedConnection)
+        self._enroll_bridge.capture_finished.connect(self._on_capture_finished, Qt.QueuedConnection)
+        self._pending_label = QLabel(self.ui)
+        self._pending_label.setObjectName('luruPendingHint')
+        self._pending_label.setStyleSheet(
+            'QLabel#luruPendingHint {'
+            'background:#fff5f5; color:#a61b1b; border:1px solid #f2b8b8; border-radius:8px; padding:4px 10px; font-weight:600; }'
+        )
+        self._pending_label.setAlignment(Qt.AlignCenter)
+        self._pending_label.setWordWrap(True)
+        self._pending_label.setText('⚠ 模型待更新')
+        self._pending_label.setGeometry(360, 396, 290, 38)
+        self._pending_label.hide()
 
         current_lock = _app_service().state.system_lock_slot
         if current_lock != 0:
@@ -478,6 +569,7 @@ class LuruWindow():
             self.luruThread = threading.Thread(target=self.lurucam.displayLuruBrand, daemon=True)
             # self.luruThread.setDaemon(True)
             self.luruThread.start()
+        self._refresh_capture_status_label()
 
     def delFace(self):
         self.delfacewin = DelFaceWindow(self.main_window)
@@ -487,56 +579,208 @@ class LuruWindow():
         self.resetwin = ResetWindow()
         self.resetwin.ui.show()
 
-    def trainModel(self):
-        print('训练模型按钮已经按下')
-        username = self.ui.lineEdit.text().strip()
-
-        can_train, reason = _app_service().can_train_user(username)
-        if not can_train:
-            QMessageBox.about(self.ui, '错误', reason)
+    def _refresh_capture_status_label(self):
+        if self._model_pending:
+            self.ui.pushButton3.setText('更新模型')
+            self.ui.setWindowTitle('录入人脸（模型待更新）')
+            self._pending_label.show()
         else:
-            _app_service().ensure_user_registered(username)
+            self.ui.pushButton3.setText('更新模型')
+            self.ui.setWindowTitle('录入人脸')
+            self._pending_label.hide()
 
-            '''
-            因为在按下拍摄按钮后，主界面的display窗口就已经启动 > display()会检测yml文件的存在
-            > 存在yml文件就会进行读取操作 > 此时的trainModel()可能刚被按下，模型尚未训练完成
-            > 导致Camera.display()中的读取yml文件操作出现报错
+    def _mark_model_pending_ui(self):
+        self._model_pending = True
+        _app_service().mark_model_pending()
+        self._refresh_capture_status_label()
+        self.main_window.refresh_model_pending_hint()
 
-            解决方法：
-            训练过程中，释放Camera的cap 训练完成后再进行 start操作
+    def _clear_model_pending_ui(self):
+        self._model_pending = False
+        self._refresh_capture_status_label()
+        self.main_window.refresh_model_pending_hint()
 
-            因为本系统为多摄像头的监控管理系统，应用中很有可能不止一个摄像头在使用yml模型进行人脸识别操作
-            所以需要对正在忙碌的窗口所对应的Camera对象都进行release操作，并在模型训练完成后
-            对应当进行重启的摄像头进行重启操作
-            '''
-            snapshots = self.main_window.capture_busy_slots()
-            self.main_window.close_slots_from_snapshots(snapshots)
+    @staticmethod
+    def _sanitize_username(raw_name):
+        name = str(raw_name).strip()
+        if not name:
+            return '', '你还没有输入姓名'
+        if re.fullmatch(r'[\u4e00-\u9fffA-Za-z0-9_]+', name) is None:
+            return '', '姓名仅允许中文、英文、数字、下划线'
+        return name, ''
 
-            try:
-                samples, labels = _rebuild_face_training_data()
-                if len(samples) == 0:
-                    QMessageBox.about(self.ui, '错误', '未检测到有效人脸样本，请重新拍摄后再训练。')
+    def _resolve_enroll_name(self, name):
+        for _, saved_name in _app_service().state.user_dic.items():
+            if saved_name == name:
+                msg = QMessageBox(self.ui)
+                msg.setWindowTitle('同名用户')
+                msg.setText(f'已存在用户“{name}”。')
+                merge_btn = msg.addButton('合并到已有用户', QMessageBox.YesRole)
+                new_btn = msg.addButton('新建ID（改名）', QMessageBox.NoRole)
+                cancel_btn = msg.addButton('取消', QMessageBox.RejectRole)
+                msg.exec_()
+                clicked = msg.clickedButton()
+                if clicked == merge_btn:
+                    return name, True
+                if clicked == new_btn:
+                    new_name, ok = QInputDialog.getText(self.ui, '新建ID', '请输入新用户名：')
+                    if not ok:
+                        return '', False
+                    valid_name, reason = self._sanitize_username(new_name)
+                    if not valid_name:
+                        QMessageBox.about(self.ui, '错误', reason)
+                        return '', False
+                    return valid_name, False
+                if clicked == cancel_btn:
+                    return '', False
+                return '', False
+        return name, False
+
+    @staticmethod
+    def _next_sample_index(user_dir):
+        max_idx = 0
+        for img_path in user_dir.iterdir():
+            if not img_path.is_file():
+                continue
+            stem = img_path.stem
+            if stem.isdigit():
+                max_idx = max(max_idx, int(stem))
+        return max_idx + 1
+
+    def _set_enroll_controls_enabled(self, enabled):
+        self.ui.pushButton.setEnabled(enabled)
+        self.ui.pushButton2.setEnabled(enabled)
+        self.ui.pushButton3.setEnabled(enabled)
+        self.ui.pushButton4.setEnabled(enabled)
+        self.ui.pushButton5.setEnabled(enabled)
+        self.ui.lineEdit.setEnabled(enabled)
+
+    def trainModel(self, exit_after_success=False):
+        if self._is_training:
+            return False
+        if self._capture_running:
+            QMessageBox.about(self.ui, '提示', '当前正在采集样本，请稍后再更新模型。')
+            return False
+        if not self._model_pending:
+            QMessageBox.about(self.ui, '提示', '当前模型已是最新状态，无需更新。')
+            return True
+
+        self._is_training = True
+        self._set_enroll_controls_enabled(False)
+        progress = QProgressDialog('正在更新模型，请稍候...', '', 0, 4, self.ui)
+        progress.setWindowTitle('模型更新中')
+        progress.setCancelButton(None)
+        progress.setWindowModality(Qt.ApplicationModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+        QApplication.processEvents()
+
+        snapshots = self.main_window.capture_busy_slots()
+        self.main_window.close_slots_from_snapshots(snapshots)
+        start_ts = time.time()
+        sample_count = 0
+        user_count = len(_app_service().state.user_dic)
+
+        try:
+            progress.setLabelText('步骤 1/4：检查样本...')
+            progress.setValue(1)
+            QApplication.processEvents()
+            samples, labels = _rebuild_face_training_data()
+            sample_count = len(samples)
+            user_count = len(_app_service().state.user_dic)
+            if len(samples) != len(labels):
+                QMessageBox.about(self.ui, '错误', f'训练数据异常：样本数={len(samples)}，标签数={len(labels)}')
+                return False
+
+            progress.setLabelText('步骤 2/4：训练并写入模型...')
+            progress.setValue(2)
+            QApplication.processEvents()
+            ok = _app_service().rebuild_and_train()
+            if not ok:
+                QMessageBox.about(self.ui, '错误', '模型更新失败，请检查样本和模型环境。')
+                return False
+
+            progress.setLabelText('步骤 3/4：刷新状态...')
+            progress.setValue(3)
+            QApplication.processEvents()
+            _app_service().state.update_user_stats()
+            self._clear_model_pending_ui()
+
+            elapsed = max(0.01, time.time() - start_ts)
+            progress.setLabelText('步骤 4/4：完成')
+            progress.setValue(4)
+            QApplication.processEvents()
+            QMessageBox.about(
+                self.ui,
+                '更新完成',
+                f'模型更新成功。\n训练人数：{user_count}\n样本总数：{sample_count}\n耗时：{elapsed:.2f} 秒',
+            )
+        finally:
+            self.main_window.restore_slots_from_snapshots(snapshots)
+            progress.close()
+            self._set_enroll_controls_enabled(True)
+            self._is_training = False
+
+        if exit_after_success:
+            self.closeQuit(force=True)
+            return True
+
+        next_action = QMessageBox.question(
+            self.ui,
+            '后续操作',
+            '模型已更新，是否继续留在录入界面？',
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        )
+        if next_action == QMessageBox.No:
+            self.closeQuit(force=True)
+        return True
+
+    def closeQuit(self, force=False):
+        if self._is_training:
+            QMessageBox.about(self.ui, '提示', '模型更新进行中，请稍候。')
+            return
+        if self._capture_running:
+            reply = QMessageBox.question(
+                self.ui,
+                '确认退出',
+                '当前正在采集样本，确认要中断并退出吗？',
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return
+
+        if (not force) and self._model_pending:
+            msg = QMessageBox(self.ui)
+            msg.setWindowTitle('模型尚未更新')
+            msg.setText('模型尚未更新，是否现在更新模型？')
+            update_btn = msg.addButton('更新后退出', QMessageBox.YesRole)
+            direct_btn = msg.addButton('直接退出', QMessageBox.NoRole)
+            cancel_btn = msg.addButton('取消', QMessageBox.RejectRole)
+            msg.exec_()
+            clicked = msg.clickedButton()
+            if clicked == cancel_btn:
+                return
+            if clicked == update_btn:
+                if self.trainModel(exit_after_success=True):
                     return
-                if len(samples) != len(labels):
-                    QMessageBox.about(self.ui, '错误', f'训练数据异常：样本数={len(samples)}，标签数={len(labels)}')
-                    return
+                return
+            if clicked == direct_btn:
+                pass
 
-                _app_service().state.face_samples = samples
-                _app_service().state.id_lists = labels
-                if not _app_service().rebuild_and_train():
-                    QMessageBox.about(self.ui, '错误', '训练失败，请检查样本和模型环境。')
-                    return
-                _app_service().state.update_user_stats()
-            finally:
-                self.main_window.restore_slots_from_snapshots(snapshots)
-
-    def closeQuit(self):
-        if hasattr(self, 'lurucam') and self.lurucam is not None:
-            self.lurucam.close()
-        if hasattr(self, 'lurucamReal') and self.lurucamReal is not None:
-            self.lurucamReal.close()
-        self._restore_integrated_camera()
+        self._shutdown_enroll_resources()
+        self.main_window.refresh_model_pending_hint()
         self.ui.close()
+
+    def _shutdown_enroll_resources(self):
+        if hasattr(self, 'lurucam') and self.lurucam is not None:
+            self.lurucam.close(release_system_lock=False)
+            self.lurucam = None
+        if hasattr(self, 'lurucamReal') and self.lurucamReal is not None:
+            self.lurucamReal.close(release_system_lock=False)
+            self.lurucamReal = None
+        self._restore_integrated_camera()
 
     def _restore_integrated_camera(self):
         if self._restore_done:
@@ -556,18 +800,24 @@ class LuruWindow():
 
     def getNewface(self):
         print('正在从摄像头录入新的人脸信息\n' * 3)
-        self.sampleNum = 0  # 已经获取的样本数量
-        self.maxSampleNum = 10
+        self.sampleNum = 0
+        self._capture_running = True
 
-        self.lurucam.cap.release()
-        self.ui.lurudisplay.setPixmap(QPixmap(asset_path('nosignal.png')))
+        if hasattr(self, 'lurucam') and self.lurucam is not None:
+            self.lurucam.close(release_system_lock=False)
+            self.lurucam = None
 
         self.lurucamReal = Camera(0, self.ui.lurudisplay, _app_service())
+        if not self.lurucamReal.cap.isOpened():
+            self._capture_running = False
+            QMessageBox.about(self.ui, '错误', '摄像头未打开，无法进行拍摄。')
+            return
         self.luruThreadReal = threading.Thread(target=self.getNewFaceDisplay, daemon=True)
         self.luruThreadReal.start()
 
     def getNewFaceDisplay(self):
         print('人脸捕捉新线程已经开启' * 5)
+        captured_any = False
         while (
             hasattr(self, 'lurucamReal')
             and self.lurucamReal._running
@@ -587,31 +837,84 @@ class LuruWindow():
                     break
                 cv2.rectangle(rawframe, (x, y), (x + w, y + h), (0, 0, 255), thickness=2)
                 cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), thickness=2)
-                self.sampleNum += 1
                 user_dir = _app_service().data_repo.user_dir_path(self.filepath)
-                cv2.imwrite(str(user_dir / f'{self.sampleNum}.jpg'), frame)
+                file_index = self._capture_write_index
+                self._capture_write_index += 1
+                self.sampleNum += 1
+                face_img = frame[y:y + h, x:x + w]
+                cv2.imwrite(str(user_dir / f'{file_index}.jpg'), face_img)
+                captured_any = True
+                self._enroll_bridge.capture_progress.emit(self.sampleNum, self.maxSampleNum)
 
             rawframe = cv2.cvtColor(rawframe, cv2.COLOR_BGR2RGB)
             self.lurucamReal._emit_frame(rawframe)
             cv2.waitKey(10)
 
         if hasattr(self, 'lurucamReal') and self.lurucamReal is not None:
-            self.lurucamReal.close()
+            self.lurucamReal.close(release_system_lock=False)
             self.lurucamReal._emit_no_signal()
+            self.lurucamReal = None
+
+        self._capture_write_index = 1
+        if self.sampleNum >= self.maxSampleNum:
+            self._enroll_bridge.capture_finished.emit(True, self.sampleNum, '采集完成，请更新模型。')
+        elif captured_any:
+            self._enroll_bridge.capture_finished.emit(True, self.sampleNum, '采集已停止，建议补足样本后更新模型。')
+        else:
+            self._enroll_bridge.capture_finished.emit(False, self.sampleNum, '未检测到人脸，请调整位置后重试。')
+
+    def _on_capture_progress(self, captured, max_count):
+        self.ui.pushButton.setText(f'拍摄中 {captured}/{max_count}')
+
+    def _on_capture_finished(self, success, captured, message):
+        self._capture_running = False
+        self.ui.pushButton.setText('拍摄')
+        if success and captured > 0:
+            self._mark_model_pending_ui()
+        QMessageBox.about(self.ui, '拍摄结果', f'{message}\n已采集：{captured}/{self.maxSampleNum}')
+        self._start_luru_preview()
         self.sampleNum = 0
-        self._restore_integrated_camera()
+        self._refresh_capture_status_label()
+
+    def _start_luru_preview(self):
+        if hasattr(self, 'lurucam') and self.lurucam is not None and self.lurucam._running:
+            return
+        self.lurucam = Camera(0, self.ui.lurudisplay, _app_service())
+        if not self.lurucam.cap.isOpened():
+            QMessageBox.about(self.ui, '错误', '摄像头预览恢复失败，请检查设备。')
+            return
+        self.luruThread = threading.Thread(target=self.lurucam.displayLuruBrand, daemon=True)
+        self.luruThread.start()
 
     def snap(self):
-        if self.ui.lineEdit.text() == '':
-            QMessageBox.about(self.ui, '错误', '你还没有输入姓名')
-        else:
-            self.filepath = self.ui.lineEdit.text()
-            # 这里需要添加“文件中是否有重复人员的校验操作”
-            print("拍照按钮按下 用户应该保证拍摄效果 \n" * 5)
-            _app_service().data_repo.recreate_user_dir(self.filepath)
-            # 存在用户姓名目录就清空，不存在就创建，确保最后存在空的data目录
+        if self._capture_running:
+            QMessageBox.about(self.ui, '提示', '正在采集中，请稍候。')
+            return
+        if self._is_training:
+            QMessageBox.about(self.ui, '提示', '模型更新进行中，暂不可拍摄。')
+            return
 
-            self.getNewface()
+        username, reason = self._sanitize_username(self.ui.lineEdit.text())
+        if not username:
+            QMessageBox.about(self.ui, '错误', reason)
+            return
+        final_name, append_mode = self._resolve_enroll_name(username)
+        if not final_name:
+            return
+
+        self.filepath = final_name
+        self.current_username = final_name
+        self.ui.lineEdit.setText(final_name)
+        print("拍照按钮按下 用户应该保证拍摄效果 \n" * 5)
+        if append_mode:
+            user_dir = _app_service().data_repo.user_dir_path(self.filepath)
+            user_dir.mkdir(parents=True, exist_ok=True)
+            self._capture_write_index = self._next_sample_index(user_dir)
+        else:
+            user_dir = _app_service().data_repo.recreate_user_dir(self.filepath)
+            self._capture_write_index = 1
+        _app_service().ensure_user_registered(self.filepath)
+        self.getNewface()
 
 
 class ResetWindow():

@@ -52,6 +52,8 @@ class AppService:
             ok = True
         else:
             ok = self.pipeline.train_and_save(samples, labels)
+        if ok:
+            self.data_repo.clear_model_pending()
         self.state.update_user_stats()
         self.persist_training_state()
         return ok
@@ -62,6 +64,7 @@ class AppService:
         self.state.user_dic = {}
         self.state.clear_training_cache()
         self.state.total_user = 0
+        self.data_repo.clear_model_pending()
         self.persist_training_state()
 
     def can_train_user(self, username: str) -> tuple[bool, str]:
@@ -98,3 +101,29 @@ class AppService:
 
         self.data_repo.remove_user_dirs(name, target_label)
         return self.rebuild_and_train()
+
+    def delete_user_only(self, username: str) -> bool:
+        name = str(username).strip()
+        if not name:
+            return False
+
+        target_label = None
+        for label, saved_name in list(self.state.user_dic.items()):
+            if saved_name == name:
+                target_label = int(label)
+                break
+
+        if target_label is not None and target_label in self.state.user_dic:
+            self.state.user_dic.pop(target_label)
+
+        self.data_repo.remove_user_dirs(name, target_label)
+        self.state.update_user_stats()
+        self.persist_training_state()
+        self.mark_model_pending()
+        return True
+
+    def mark_model_pending(self) -> None:
+        self.data_repo.mark_model_pending()
+
+    def is_model_pending(self) -> bool:
+        return self.data_repo.is_model_pending()

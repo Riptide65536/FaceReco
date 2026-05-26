@@ -329,9 +329,9 @@ class Camera:
             if not self._running:
                 break
 
-    def close(self):
+    def close(self, release_system_lock=True):
         self._running = False
-        if self.url == 0:
+        if self.url == 0 and release_system_lock:
             self._app_service.state.system_lock_slot = 0
         if self.cap is not None:
             self.cap.release()

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import os
 import threading
+import ctypes
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable, Optional
+import sys
 
 if TYPE_CHECKING:
     import numpy as np
@@ -16,6 +18,7 @@ class FaceRecognitionService:
 
     _backend_status_lock = threading.Lock()
     _backend_error_message: Optional[str] = None
+    _dll_dir_handles: list[object] = []
 
     def __init__(
         self,
@@ -44,6 +47,7 @@ class FaceRecognitionService:
             self._lbph_threshold = 68.0
 
         self._backend = None
+        self._deep_providers: list[str] = []
         self._init_backend_with_fallback()
         if self.model_path.exists():
             try:
@@ -94,7 +98,9 @@ class FaceRecognitionService:
                 self._backend_error_message = message
             raise RuntimeError(message) from exc
 
-        providers = ["CPUExecutionProvider"]
+        providers = self._resolve_ort_providers()
+        self._deep_providers = list(providers)
+        print("face backend providers:", providers)
         det_size = (320, 320) if os.getenv("FACE_RECO_DEEP_DET_SIZE", "").strip() == "" else None
         if det_size is None:
             try:
@@ -117,6 +123,214 @@ class FaceRecognitionService:
             with self._backend_status_lock:
                 self._backend_error_message = message
             raise RuntimeError(message) from exc
+
+    @staticmethod
+    def _resolve_ort_providers() -> list[str]:
+        FaceRecognitionService._setup_windows_dll_dirs()
+        verbose = os.getenv("FACE_RECO_VERBOSE", "0") == "1"
+        preferred = os.getenv("FACE_RECO_ORT_PROVIDER", "").strip()
+        available: list[str] = []
+        try:
+            import onnxruntime as ort  # type: ignore
+            try:
+                # Best effort preload for CUDA/cuDNN/MSVC runtime DLLs.
+                if hasattr(ort, "preload_dlls"):
+                    ort.preload_dlls()  # type: ignore[attr-defined]
+            except Exception:
+                pass
+
+            available = list(ort.get_available_providers())
+        except Exception:
+            available = []
+        if verbose:
+            print("ort available providers:", available)
+
+        enable_trt = os.getenv("FACE_RECO_ENABLE_TRT", "0") == "1"
+        order = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        if enable_trt:
+            order.insert(1, "TensorrtExecutionProvider")
+        selected = [p for p in order if p in available]
+
+        if preferred:
+            pref_norm = preferred
+            if not pref_norm.endswith("ExecutionProvider"):
+                pref_norm = f"{pref_norm}ExecutionProvider"
+            if pref_norm in selected:
+                selected = [pref_norm] + [p for p in selected if p != pref_norm]
+
+        if not selected:
+            selected = ["CPUExecutionProvider"]
+        elif "CPUExecutionProvider" not in selected:
+            selected.append("CPUExecutionProvider")
+
+        # Validate the provider list by creating a tiny throwaway session.
+        # This catches Windows initialization failures early and lets us fall
+        # back to CPU without spamming every subsequent model load.
+        if "CUDAExecutionProvider" in selected and os.name == "nt":
+            if not FaceRecognitionService._probe_cuda_session():
+                if verbose:
+                    print("cuda provider probe failed, falling back to CPU")
+                selected = ["CPUExecutionProvider"]
+        return selected
+
+    @staticmethod
+    def _probe_cuda_session() -> bool:
+        try:
+            import onnxruntime as ort  # type: ignore
+            import tempfile
+            import numpy as np
+
+            model = FaceRecognitionService._build_tiny_onnx_identity_model()
+            with tempfile.TemporaryDirectory() as td:
+                model_path = Path(td) / "probe.onnx"
+                model_path.write_bytes(model)
+                sess = ort.InferenceSession(
+                    str(model_path),
+                    providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
+                )
+                x = np.zeros((1, 1), dtype=np.float32)
+                sess.run(None, {"x": x})
+            return True
+        except Exception as exc:
+            if os.getenv("FACE_RECO_VERBOSE", "0") == "1":
+                print(f"cuda session probe failed: {type(exc).__name__}: {exc}")
+            return False
+
+    @staticmethod
+    def _build_tiny_onnx_identity_model() -> bytes:
+        # Minimal ONNX identity graph. Serialized manually to avoid adding a
+        # hard dependency on onnx for the probe path.
+        import struct
+
+        def varint(n: int) -> bytes:
+            out = bytearray()
+            while True:
+                b = n & 0x7F
+                n >>= 7
+                if n:
+                    out.append(b | 0x80)
+                else:
+                    out.append(b)
+                    break
+            return bytes(out)
+
+        def field(tag: int, data: bytes) -> bytes:
+            return varint(tag) + varint(len(data)) + data
+
+        def str_field(tag: int, text: str) -> bytes:
+            raw = text.encode("utf-8")
+            return field(tag, raw)
+
+        def tensor_value_info(name: str) -> bytes:
+            # ValueInfoProto: name + type(float tensor, [1,1])
+            dims = field(1, varint(1)) + field(1, varint(1))
+            tensor_shape = field(2, dims)
+            tensor_type = field(1, varint(1)) + field(2, tensor_shape)
+            type_proto = field(1, tensor_type)
+            return str_field(1, name) + field(2, type_proto)
+
+        # This handcrafted payload is intentionally tiny and only used for a
+        # CUDA provider smoke test.
+        # A more complete ONNX builder would be overkill here.
+        try:
+            import onnx  # type: ignore
+            from onnx import TensorProto, helper  # type: ignore
+
+            x = helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 1])
+            y = helper.make_tensor_value_info("y", TensorProto.FLOAT, [1, 1])
+            node = helper.make_node("Identity", ["x"], ["y"])
+            graph = helper.make_graph([node], "probe", [x], [y])
+            model = helper.make_model(graph, producer_name="face-reco-probe")
+            return model.SerializeToString()
+        except Exception:
+            # If onnx is unavailable, return an empty payload and let the probe
+            # fail fast rather than blocking startup.
+            return b""
+
+    @staticmethod
+    def _setup_windows_dll_dirs() -> None:
+        if os.name != "nt":
+            return
+        if not hasattr(os, "add_dll_directory"):
+            return
+        if FaceRecognitionService._dll_dir_handles:
+            return
+
+        candidate_dirs: list[Path] = []
+        # Collect nvidia runtime bins installed by pip packages.
+        for sp in [Path(p) for p in sys.path if "site-packages" in p]:
+            nvidia_root = sp / "nvidia"
+            if not nvidia_root.exists():
+                continue
+            # Do not hardcode package names; different ORT/CUDA builds can
+            # depend on additional nvidia wheels (cufft/curand/cusparse/...).
+            for sub in nvidia_root.iterdir():
+                if not sub.is_dir():
+                    continue
+                bin_dir = sub / "bin"
+                if bin_dir.exists():
+                    candidate_dirs.append(bin_dir)
+            # onnxruntime capi directory may also be needed in DLL search path.
+            ort_capi = sp / "onnxruntime" / "capi"
+            if ort_capi.exists():
+                candidate_dirs.append(ort_capi)
+
+        # Deduplicate while preserving order.
+        seen = set()
+        unique_dirs: list[Path] = []
+        for d in candidate_dirs:
+            key = str(d).lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_dirs.append(d)
+
+        if not unique_dirs:
+            return
+
+        verbose = os.getenv("FACE_RECO_VERBOSE", "0") == "1"
+        if verbose:
+            print("ort dll dirs count:", len(unique_dirs))
+            for d in unique_dirs:
+                print("ort dll dir:", d)
+
+        # Keep handles alive for the process lifetime.
+        for d in unique_dirs:
+            try:
+                handle = os.add_dll_directory(str(d))
+                FaceRecognitionService._dll_dir_handles.append(handle)
+            except Exception:
+                pass
+
+        # Keep PATH aligned for third-party loaders.
+        current_path = os.environ.get("PATH", "")
+        prepend = ";".join(str(d) for d in unique_dirs)
+        os.environ["PATH"] = f"{prepend};{current_path}" if current_path else prepend
+
+    @staticmethod
+    def _provider_dll_ready(provider_name: str) -> bool:
+        if provider_name == "CPUExecutionProvider":
+            return True
+        dll_map = {
+            "CUDAExecutionProvider": "onnxruntime_providers_cuda.dll",
+            "TensorrtExecutionProvider": "onnxruntime_providers_tensorrt.dll",
+        }
+        dll_name = dll_map.get(provider_name)
+        if not dll_name:
+            return True
+        try:
+            import onnxruntime as ort  # type: ignore
+
+            capi_dir = Path(ort.__file__).resolve().parent / "capi"
+            dll_path = capi_dir / dll_name
+            if not dll_path.exists():
+                return False
+            ctypes.WinDLL(str(dll_path))
+            return True
+        except Exception as exc:
+            if os.getenv("FACE_RECO_VERBOSE", "0") == "1":
+                print(f"ort provider dll probe failed: {provider_name} -> {exc}")
+            return False
 
     def _create_lbph_backend(self):
         try:

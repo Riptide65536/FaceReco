@@ -148,6 +148,7 @@ class MWindow():
         if self._backend_mode_label.parent() is self.mui.groupBox and self._backend_mode_label.objectName() != 'mainBackendHint':
             self._backend_mode_label.setGeometry(18, 24, max(260, self.mui.groupBox.width() - 36), 24)
         mode = _app_service().pipeline.current_backend_mode()
+        provider_text = _app_service().pipeline.current_provider_text()
         mode_map = {
             'deep': '深度模型',
             'lbph': 'LBPH（降级）',
@@ -156,7 +157,10 @@ class MWindow():
             'unknown': '未知',
         }
         text = mode_map.get(mode, str(mode))
-        self._backend_mode_label.setText(f'当前识别后端：{text}')
+        if mode == 'deep':
+            self._backend_mode_label.setText(f'当前识别后端：{text} [{provider_text}]')
+        else:
+            self._backend_mode_label.setText(f'当前识别后端：{text}')
         self._backend_mode_label.show()
         self._backend_mode_label.raise_()
 

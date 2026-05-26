@@ -91,6 +91,17 @@ class RecognitionPipeline:
         except Exception:
             return "unknown"
 
+    def current_provider_text(self) -> str:
+        if self.face_service is None:
+            return "unavailable"
+        try:
+            providers = getattr(self.face_service, "_deep_providers", None)
+            if not providers:
+                return "unknown"
+            return " > ".join(list(providers))
+        except Exception:
+            return "unknown"
+
     def face_service_error_text(self) -> str:
         return self._face_service_error.strip()
 

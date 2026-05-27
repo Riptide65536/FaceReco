@@ -87,6 +87,11 @@ class FaceRecognitionService:
         cache_ttl, cache_age = presets.get(mode, presets["balanced"])
         self._frame_cache_min_interval = max(0.0, float(cache_ttl))
         self._frame_cache_max_age = max(self._frame_cache_min_interval, float(cache_age))
+        if self._deep_detector is not None and hasattr(self._deep_detector, "set_runtime_mode"):
+            try:
+                self._deep_detector.set_runtime_mode(mode)
+            except Exception:
+                pass
 
     def _init_backend_with_fallback(self) -> None:
         try:
@@ -108,6 +113,11 @@ class FaceRecognitionService:
         with self._backend_status_lock:
             if self._backend_error_message:
                 raise RuntimeError(self._backend_error_message)
+
+        # Import torch before ORT/InsightFace on Windows so PyTorch resolves its
+        # CUDA/cuDNN DLL chain first. This avoids later YOLO initialization
+        # falling back when ORT has already altered the DLL search order.
+        self._prime_torch_runtime()
 
         try:
             from insightface.app import FaceAnalysis  # type: ignore
@@ -149,7 +159,12 @@ class FaceRecognitionService:
             self.detector = self._deep_detector
             detector_name = type(self._deep_detector).__name__
             if isinstance(self._deep_detector, YOLOFaceDetector):
-                print(f"face detector: {detector_name} ({self._deep_detector.model_path})")
+                print(
+                    "face detector:",
+                    f"{detector_name} ({self._deep_detector.model_path})",
+                    f"device={getattr(self._deep_detector, 'device', None)}",
+                    f"imgsz={getattr(self._deep_detector, 'imgsz', None)}",
+                )
             else:
                 print(f"face detector: {detector_name}")
             return {
@@ -177,7 +192,7 @@ class FaceRecognitionService:
         yolo_conf = float(os.getenv("FACE_RECO_YOLO_CONF", "0.25"))
         yolo_iou = float(os.getenv("FACE_RECO_YOLO_IOU", "0.45"))
         yolo_imgsz = int(os.getenv("FACE_RECO_YOLO_IMGSZ", "640"))
-        yolo_device = os.getenv("FACE_RECO_YOLO_DEVICE", "").strip() or None
+        yolo_device = self._resolve_yolo_device()
 
         try:
             return YOLOFaceDetector(
@@ -211,6 +226,29 @@ class FaceRecognitionService:
             if candidate.exists():
                 return candidate
         return candidates[0]
+
+    @staticmethod
+    def _prime_torch_runtime() -> None:
+        try:
+            import torch  # type: ignore
+
+            _ = torch.cuda.is_available()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _resolve_yolo_device() -> str | None:
+        env_device = os.getenv("FACE_RECO_YOLO_DEVICE", "").strip()
+        if env_device:
+            return env_device
+        try:
+            import torch  # type: ignore
+
+            if torch.cuda.is_available():
+                return "0"
+            return "cpu"
+        except Exception:
+            return None
 
     @staticmethod
     def _resolve_ort_providers() -> list[str]:

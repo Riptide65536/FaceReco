@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 from concurrent.futures import ThreadPoolExecutor
+from queue import Queue
 
 from app.state import AppState
 from services.face_recognition_service import FaceRecognitionService
@@ -100,6 +101,38 @@ def test_camera_track_stabilizer_keeps_identity_on_short_unknown_dips():
         [{"bbox": (12, 12, 20, 20), "name": "unknown", "label": 1, "confidence": 61.0}]
     )
     assert second and second[0]["name"] == "alice"
+
+
+def test_camera_track_stabilizer_keeps_identity_during_detection_only_refresh():
+    try:
+        from app.runtime.camera_stream import Camera
+    except ModuleNotFoundError:
+        pytest.skip("PySide2 is not available in this test environment")
+
+    camera = Camera.__new__(Camera)
+    camera._prediction_tracks = []
+    camera._next_track_id = 1
+    camera._track_iou_threshold = 0.3
+    camera._track_hold_frames = 3
+    camera._track_max_misses = 5
+    camera._track_ema_alpha = 0.5
+    camera._track_center_match_ratio = 1.15
+    camera._track_area_ratio_limit = 2.6
+    camera._track_suppress_distance_ratio = 1.35
+    camera._track_identity_hold_frames = 3
+    camera._track_identity_keep_conf = 52.0
+    camera._track_identity_switch_conf = 80.0
+
+    first = camera._stabilize_predictions(
+        [{"bbox": (10, 10, 20, 20), "name": "alice", "label": 1, "confidence": 88.0}]
+    )
+    assert first and first[0]["name"] == "alice"
+
+    second = camera._stabilize_predictions(
+        [{"bbox": (14, 12, 20, 20), "name": "unknown", "recognition_skipped": True}]
+    )
+    assert second and second[0]["name"] == "alice"
+    assert second[0]["match_reason"] == "tracked"
 
 
 def test_camera_track_stabilizer_merges_fast_motion_without_double_boxes():
@@ -207,8 +240,54 @@ def test_camera_submit_detection_task_scales_boxes():
 
     assert key == "frame-key"
     assert predicted == [
-        {"bbox": (20, 40, 60, 80), "label": None, "name": "unknown", "confidence": None}
+        {
+            "bbox": (20, 40, 60, 80),
+            "label": None,
+            "name": "unknown",
+            "confidence": None,
+            "recognition_skipped": True,
+        }
     ]
+
+
+def test_camera_get_frame_prefers_latest_frame():
+    try:
+        from app.runtime.camera_stream import Camera
+    except ModuleNotFoundError:
+        pytest.skip("PySide2 is not available in this test environment")
+
+    camera = Camera.__new__(Camera)
+    camera._frame_queue = Queue(maxsize=3)
+    camera._latest_frame_only = True
+    camera._frame_timeout_sentinel = object()
+
+    camera._frame_queue.put_nowait("stale")
+    camera._frame_queue.put_nowait("fresh")
+
+    assert camera._get_frame() == "fresh"
+
+
+def test_camera_should_run_full_recognition_uses_interval_and_force_refresh():
+    try:
+        from app.runtime.camera_stream import Camera
+    except ModuleNotFoundError:
+        pytest.skip("PySide2 is not available in this test environment")
+
+    camera = Camera.__new__(Camera)
+    camera.face_service = object()
+    camera._frame_index = 1
+    camera._last_predictions = [{"name": "alice"}]
+    camera._last_recognition_ts = 10.0
+    camera._recognition_interval = 3
+    camera._recognition_min_gap_s = 0.2
+    camera._recognition_force_refresh_s = 0.8
+
+    assert camera._should_run_full_recognition(10.1) is False
+    assert camera._should_run_full_recognition(10.9) is True
+
+    camera._last_recognition_ts = 10.0
+    camera._frame_index = 3
+    assert camera._should_run_full_recognition(10.3) is True
 
 
 def test_camera_runtime_mode_supports_realtime_30fps(monkeypatch):

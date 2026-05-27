@@ -56,9 +56,20 @@ class YOLOFaceDetector(BaseFaceDetector):
 
         self.conf_threshold = float(conf_threshold)
         self.iou_threshold = float(iou_threshold)
-        self.imgsz = max(160, int(imgsz))
+        self._base_imgsz = max(160, int(imgsz))
+        self.imgsz = self._base_imgsz
         self.device = device or None
         self._model = YOLO(str(self.model_path))
+
+    def set_runtime_mode(self, mode: str) -> None:
+        mode = str(mode or "").strip().lower()
+        if mode == "realtime":
+            self.imgsz = max(320, min(self._base_imgsz, 416))
+            return
+        if mode == "accurate":
+            self.imgsz = max(self._base_imgsz, 640)
+            return
+        self.imgsz = self._base_imgsz
 
     def detect(self, frame: "np.ndarray") -> list[FaceDetection]:
         results = self._model.predict(

@@ -82,7 +82,9 @@ class Camera:
         self._bridge = _LabelBridge(outLabel)
         self._running = True
         self.cap = cv2.VideoCapture(self.url)
-        self._frame_queue = Queue(maxsize=3)
+        self._configure_capture_for_low_latency()
+        self._latest_frame_only = os.getenv("FACE_RECO_LATEST_FRAME_ONLY", "1") != "0"
+        self._frame_queue = Queue(maxsize=max(1, int(os.getenv("FACE_RECO_FRAME_QUEUE", "1"))))
         self._reader_thread = None
         self._reader_started = False
         self._stream_end_sentinel = object()
@@ -96,9 +98,11 @@ class Camera:
         self._analysis_width = max(240, int(os.getenv("FACE_RECO_ANALYSIS_WIDTH", "480")))
         self._motion_threshold = max(0.0, float(os.getenv("FACE_RECO_MIN_MOTION", "2.5")))
         self._last_predict_ts = 0.0
+        self._last_recognition_ts = 0.0
         self._last_analysis_gray_small: np.ndarray | None = None
         self._last_predictions: list[dict] = []
         self._last_prediction_key = ""
+        self._predict_task_kind = ""
         self._next_track_id = 1
         self._track_iou_threshold = max(0.05, min(0.9, float(os.getenv("FACE_RECO_TRACK_IOU", "0.30"))))
         self._track_hold_frames = max(0, int(os.getenv("FACE_RECO_TRACK_HOLD_FRAMES", "3")))
@@ -117,6 +121,13 @@ class Camera:
         self._emotion_cache: dict[str, dict[str, object]] = {}
         self._emotion_cache_ttl = max(0.5, float(os.getenv("FACE_RECO_EMOTION_TTL", "2.0")))
         self._emotion_min_gap_s = max(0.0, float(os.getenv("FACE_RECO_EMOTION_MIN_GAP", "0.35")))
+        self._emotion_default_label = os.getenv("FACE_RECO_EMOTION_DEFAULT", "neutral").strip() or "neutral"
+        self._recognition_interval = max(1, int(os.getenv("FACE_RECO_RECOGNIZE_INTERVAL", "2")))
+        self._recognition_min_gap_s = max(0.0, float(os.getenv("FACE_RECO_RECOGNIZE_MIN_GAP", "0.18")))
+        self._recognition_force_refresh_s = max(
+            self._recognition_min_gap_s,
+            float(os.getenv("FACE_RECO_RECOGNIZE_FORCE_REFRESH", "0.75")),
+        )
         self._last_emotion_predict_ts = 0.0
         self._label_draw_interval = max(1, int(os.getenv("FACE_RECO_LABEL_SKIP", "2")))
         self._summary_draw_interval = max(1, int(os.getenv("FACE_RECO_SUMMARY_SKIP", "4")))
@@ -128,6 +139,9 @@ class Camera:
         self._show_fps_overlay = bool(getattr(self._app_service.state, "show_fps_overlay", False))
         self._predict_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="face-predict")
         self._predict_future: Future | None = None
+        self._emotion_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="emotion-predict")
+        self._emotion_future: Future | None = None
+        self._emotion_future_name = ""
 
         self.face_service = None
         try:
@@ -153,6 +167,12 @@ class Camera:
     def _sleep_frame_interval():
         time.sleep(0.01)
 
+    def _configure_capture_for_low_latency(self) -> None:
+        try:
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        except Exception:
+            pass
+
     def _apply_runtime_mode(self, mode):
         mode = str(mode or "balanced").strip().lower()
         realtime_fps_override = float(os.getenv("FACE_RECO_UI_FPS_REALTIME", "30"))
@@ -161,12 +181,15 @@ class Camera:
         presets = {
             "realtime": {
                 "predict_interval": 1,
-                "predict_min_gap_s": 0.08,
-                "force_refresh_s": 0.45,
-                "analysis_width": 384,
+                "predict_min_gap_s": 0.05,
+                "force_refresh_s": 0.30,
+                "analysis_width": 320,
                 "motion_threshold": 1.8,
-                "emotion_ttl": 1.0,
-                "emotion_min_gap_s": 0.45,
+                "emotion_ttl": 3.0,
+                "emotion_min_gap_s": 1.50,
+                "recognition_interval": 4,
+                "recognition_min_gap_s": 0.22,
+                "recognition_force_refresh_s": 0.80,
                 "track_hold_frames": 2,
                 "track_max_misses": 3,
                 "track_alpha": 0.55,
@@ -178,10 +201,13 @@ class Camera:
                 "predict_interval": 2,
                 "predict_min_gap_s": 0.12,
                 "force_refresh_s": 1.2,
-                "analysis_width": 480,
+                "analysis_width": 448,
                 "motion_threshold": 2.5,
                 "emotion_ttl": 2.0,
                 "emotion_min_gap_s": 0.35,
+                "recognition_interval": 2,
+                "recognition_min_gap_s": 0.22,
+                "recognition_force_refresh_s": 0.90,
                 "track_hold_frames": 3,
                 "track_max_misses": 5,
                 "track_alpha": 0.65,
@@ -197,6 +223,9 @@ class Camera:
                 "motion_threshold": 3.5,
                 "emotion_ttl": 3.0,
                 "emotion_min_gap_s": 0.20,
+                "recognition_interval": 1,
+                "recognition_min_gap_s": 0.20,
+                "recognition_force_refresh_s": 0.45,
                 "track_hold_frames": 4,
                 "track_max_misses": 6,
                 "track_alpha": 0.75,
@@ -214,6 +243,12 @@ class Camera:
         self._motion_threshold = max(0.0, float(preset["motion_threshold"]))
         self._emotion_cache_ttl = max(0.5, float(preset["emotion_ttl"]))
         self._emotion_min_gap_s = max(0.0, float(preset["emotion_min_gap_s"]))
+        self._recognition_interval = max(1, int(preset["recognition_interval"]))
+        self._recognition_min_gap_s = max(0.0, float(preset["recognition_min_gap_s"]))
+        self._recognition_force_refresh_s = max(
+            self._recognition_min_gap_s,
+            float(preset["recognition_force_refresh_s"]),
+        )
         self._track_hold_frames = max(0, int(preset["track_hold_frames"]))
         self._track_max_misses = max(self._track_hold_frames, int(preset["track_max_misses"]))
         self._track_ema_alpha = min(1.0, max(0.2, float(preset["track_alpha"])))
@@ -232,9 +267,13 @@ class Camera:
         if self._is_deep_cpu_only():
             self._analysis_width = min(self._analysis_width, 320)
             self._predict_interval = max(self._predict_interval, 3)
-            self._predict_min_gap_s = max(self._predict_min_gap_s, 0.22)
-            self._force_refresh_s = max(self._force_refresh_s, 1.4)
-            self._emotion_min_gap_s = max(self._emotion_min_gap_s, 0.75)
+            self._predict_min_gap_s = max(self._predict_min_gap_s, 0.12)
+            self._force_refresh_s = max(self._force_refresh_s, 0.55)
+            self._recognition_interval = max(self._recognition_interval, 4)
+            self._recognition_min_gap_s = max(self._recognition_min_gap_s, 0.30)
+            self._recognition_force_refresh_s = max(self._recognition_force_refresh_s, 1.10)
+            self._emotion_cache_ttl = max(self._emotion_cache_ttl, 3.5)
+            self._emotion_min_gap_s = max(self._emotion_min_gap_s, 2.0)
             self._label_draw_interval = max(self._label_draw_interval, 3)
             self._summary_draw_interval = max(self._summary_draw_interval, 6)
             if self._runtime_mode != "realtime":
@@ -302,22 +341,37 @@ class Camera:
                     pass
                 break
             try:
-                self._frame_queue.put(frame, timeout=0.1)
+                self._frame_queue.put(frame, timeout=0.02)
             except Full:
                 try:
-                    _ = self._frame_queue.get_nowait()
+                    while True:
+                        _ = self._frame_queue.get_nowait()
+                        if not self._latest_frame_only:
+                            break
                 except Empty:
                     pass
                 try:
                     self._frame_queue.put_nowait(frame)
+                except Empty:
+                    pass
                 except Full:
                     pass
 
     def _get_frame(self):
         try:
-            return self._frame_queue.get(timeout=0.3)
+            frame = self._frame_queue.get(timeout=0.3)
         except Empty:
             return self._frame_timeout_sentinel
+        if not self._latest_frame_only:
+            return frame
+        latest = frame
+        while True:
+            try:
+                newest = self._frame_queue.get_nowait()
+            except Empty:
+                break
+            latest = newest
+        return latest
 
     def _notify_stream_end(self):
         if callable(self._on_stream_end):
@@ -421,6 +475,7 @@ class Camera:
                     "label": None,
                     "name": "unknown",
                     "confidence": None,
+                    "recognition_skipped": True,
                 }
                 for box in boxes
             ]
@@ -438,10 +493,26 @@ class Camera:
 
         return self._predict_pool.submit(_job)
 
+    def _should_run_full_recognition(self, now_ts: float) -> bool:
+        elapsed = now_ts - self._last_recognition_ts
+        if self._last_recognition_ts <= 0.0:
+            return True
+        if elapsed >= self._recognition_force_refresh_s:
+            return True
+        if elapsed < self._recognition_min_gap_s:
+            return False
+        if not self._last_predictions:
+            return True
+        if any(str(pred.get("name", "unknown")) == "unknown" for pred in self._last_predictions):
+            return True
+        return (self._frame_index % self._recognition_interval) == 0
+
     def _should_run_emotion_inference(self, name: str, now_ts: float) -> bool:
         if self.emotion is None:
             return False
         if name == "unknown":
+            return False
+        if self._emotion_future is not None and (not self._emotion_future.done()):
             return False
         if (now_ts - self._last_emotion_predict_ts) < self._emotion_min_gap_s:
             return False
@@ -449,6 +520,37 @@ class Camera:
         if cache_entry and (now_ts - float(cache_entry.get("ts", 0.0))) <= self._emotion_cache_ttl:
             return False
         return True
+
+    def _collect_emotion_result(self) -> None:
+        if self._emotion_future is None or (not self._emotion_future.done()):
+            return
+        try:
+            name, emotion_text, predicted_ts = self._emotion_future.result()
+            if name:
+                self._emotion_cache[name] = {"emotion": emotion_text, "ts": float(predicted_ts)}
+                self._last_emotion_predict_ts = float(predicted_ts)
+        except Exception:
+            pass
+        finally:
+            self._emotion_future = None
+            self._emotion_future_name = ""
+
+    def _submit_emotion_task(self, name: str, face_gray: np.ndarray, now_ts: float) -> None:
+        if self.emotion is None:
+            return
+        if self._emotion_future is not None and (not self._emotion_future.done()):
+            return
+        face_copy = np.ascontiguousarray(face_gray.copy())
+
+        def _job():
+            try:
+                emotion_text, _ = self.emotion.predict(face_copy)
+            except Exception:
+                emotion_text = self._emotion_default_label
+            return name, emotion_text, now_ts
+
+        self._emotion_future_name = name
+        self._emotion_future = self._emotion_pool.submit(_job)
 
     @staticmethod
     def _resize_for_analysis(frame_bgr: np.ndarray, target_width: int) -> np.ndarray:
@@ -712,12 +814,38 @@ class Camera:
         confidence = pred.get("confidence")
         conf_value = float(confidence or 0.0)
         similarity = pred.get("similarity")
+        recognition_skipped = bool(pred.get("recognition_skipped", False))
 
         same_label = (
             prev_label is not None
             and label is not None
             and int(prev_label) == int(label)
         )
+
+        if recognition_skipped:
+            if prev_name != "unknown":
+                return {
+                    "name": prev_name,
+                    "label": prev_label,
+                    "similarity": track.get("similarity"),
+                    "confidence": prev_conf,
+                    "identity_hold": prev_hold + 1,
+                    "pending_name": "",
+                    "pending_label": None,
+                    "switch_streak": 0,
+                    "match_reason": "tracked",
+                }
+            return {
+                "name": "unknown",
+                "label": prev_label,
+                "similarity": track.get("similarity"),
+                "confidence": prev_conf if prev_conf > 0.0 else confidence,
+                "identity_hold": prev_hold,
+                "pending_name": "",
+                "pending_label": None,
+                "switch_streak": 0,
+                "match_reason": "tracked-unknown",
+            }
 
         if prev_name != "unknown":
             if name == "unknown":
@@ -887,6 +1015,7 @@ class Camera:
         for frame in self._iter_frames():
             self._frame_index += 1
             frame_people = []
+            self._collect_emotion_result()
             rawframe = cv2.resize(frame, (640, 360))
             analysis_frame = self._resize_for_analysis(rawframe, self._analysis_width)
             gray = cv2.cvtColor(rawframe, cv2.COLOR_BGR2GRAY)
@@ -912,20 +1041,33 @@ class Camera:
                     self._last_predictions = predicted
                     self._last_predict_ts = now_ts
                     self._last_prediction_key = str(key)
+                    if self._predict_task_kind == "recognize":
+                        self._last_recognition_ts = now_ts
                 except Exception:
                     pass
                 finally:
                     self._predict_future = None
+                    self._predict_task_kind = ""
 
             if should_predict and self._predict_future is None:
                 src_h, src_w = analysis_frame.shape[:2]
                 dst_h, dst_w = rawframe.shape[:2]
-                self._predict_future = self._submit_prediction_task(
-                    analysis_frame.copy(),
-                    (src_w, src_h),
-                    (dst_w, dst_h),
-                    frame_signature,
-                )
+                if self._should_run_full_recognition(now_ts):
+                    self._predict_future = self._submit_prediction_task(
+                        analysis_frame.copy(),
+                        (src_w, src_h),
+                        (dst_w, dst_h),
+                        frame_signature,
+                    )
+                    self._predict_task_kind = "recognize"
+                else:
+                    self._predict_future = self._submit_detection_task(
+                        analysis_frame.copy(),
+                        (src_w, src_h),
+                        (dst_w, dst_h),
+                        frame_signature,
+                    )
+                    self._predict_task_kind = "detect"
                 self._last_analysis_gray_small = analysis_gray.copy()
 
             predictions = self._last_predictions
@@ -952,16 +1094,11 @@ class Camera:
                     face_gray = gray[y : y + h, x : x + w]
                     now_emotion_ts = time.monotonic()
                     cache_entry = self._emotion_cache.get(name)
-                    raw_emotion = "neutral"
+                    raw_emotion = self._emotion_default_label
                     if cache_entry and (now_emotion_ts - float(cache_entry.get("ts", 0.0))) <= self._emotion_cache_ttl:
-                        raw_emotion = str(cache_entry.get("emotion", "neutral"))
+                        raw_emotion = str(cache_entry.get("emotion", self._emotion_default_label))
                     elif self._should_run_emotion_inference(name, now_emotion_ts):
-                        try:
-                            raw_emotion, _ = self.emotion.predict(face_gray)
-                        except Exception:
-                            raw_emotion = "neutral"
-                        self._emotion_cache[name] = {"emotion": raw_emotion, "ts": now_emotion_ts}
-                        self._last_emotion_predict_ts = now_emotion_ts
+                        self._submit_emotion_task(name, face_gray, now_emotion_ts)
 
                     state = emotion_state.get(name, {"last_raw": "", "stable": raw_emotion, "count": 0})
                     if raw_emotion == state["last_raw"]:
@@ -1049,6 +1186,7 @@ class Camera:
                     pass
                 finally:
                     self._predict_future = None
+                    self._predict_task_kind = ""
 
             if should_detect and self._predict_future is None:
                 src_h, src_w = analysis_frame.shape[:2]
@@ -1059,6 +1197,7 @@ class Camera:
                     (dst_w, dst_h),
                     frame_signature,
                 )
+                self._predict_task_kind = "detect"
                 self._last_analysis_gray_small = analysis_gray.copy()
 
             text_items = [(self.nameAndLocation, (7, 20), (0, 0, 255), 0.6, 2)]
@@ -1110,6 +1249,16 @@ class Camera:
         if predict_pool is not None:
             try:
                 predict_pool.shutdown(wait=False, cancel_futures=True)
+            except Exception:
+                pass
+        emotion_future = getattr(self, "_emotion_future", None)
+        if emotion_future is not None and (not emotion_future.done()):
+            emotion_future.cancel()
+        self._emotion_future = None
+        emotion_pool = getattr(self, "_emotion_pool", None)
+        if emotion_pool is not None:
+            try:
+                emotion_pool.shutdown(wait=False, cancel_futures=True)
             except Exception:
                 pass
         if self.url == 0 and release_system_lock:

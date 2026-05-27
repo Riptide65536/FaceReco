@@ -240,6 +240,36 @@ def test_face_recognition_service_keeps_deep_backend_when_yolo_detector_fails(mo
     assert service.detect_faces(np.zeros((32, 32), dtype="uint8")) == [(1, 2, 30, 40)]
 
 
+def test_face_recognition_service_prefers_cuda_for_yolo_when_torch_has_gpu(monkeypatch):
+    class _FakeCuda:
+        @staticmethod
+        def is_available():
+            return True
+
+    class _FakeTorch:
+        cuda = _FakeCuda()
+
+    monkeypatch.delenv("FACE_RECO_YOLO_DEVICE", raising=False)
+    monkeypatch.setitem(sys.modules, "torch", _FakeTorch())
+
+    assert FaceRecognitionService._resolve_yolo_device() == "0"
+
+
+def test_face_recognition_service_falls_back_to_cpu_for_yolo_when_torch_has_no_gpu(monkeypatch):
+    class _FakeCuda:
+        @staticmethod
+        def is_available():
+            return False
+
+    class _FakeTorch:
+        cuda = _FakeCuda()
+
+    monkeypatch.delenv("FACE_RECO_YOLO_DEVICE", raising=False)
+    monkeypatch.setitem(sys.modules, "torch", _FakeTorch())
+
+    assert FaceRecognitionService._resolve_yolo_device() == "cpu"
+
+
 def test_face_recognition_service_aligns_five_point_keypoints_for_arcface(monkeypatch, tmp_path):
     class _FakeEmbedder:
         @staticmethod

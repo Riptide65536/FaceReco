@@ -9,6 +9,8 @@ class AppState:
     """Centralized mutable state replacing ad-hoc global variables."""
 
     system_lock_slot: int = 0
+    realtime_mode: str = "balanced"
+    show_fps_overlay: bool = False
     total_user: int = 0
     face_samples: List = field(default_factory=list)
     id_lists: List[int] = field(default_factory=list)

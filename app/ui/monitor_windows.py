@@ -1,6 +1,6 @@
 ﻿from __future__ import annotations
 
-from PySide2.QtWidgets import QMessageBox, QProgressDialog, QInputDialog, QApplication, QLabel
+from PySide2.QtWidgets import QMessageBox, QProgressDialog, QInputDialog, QApplication, QLabel, QComboBox, QPushButton
 from PySide2.QtUiTools import QUiLoader
 from PySide2.QtGui import QPixmap
 from PySide2.QtCore import Qt, QObject, Signal
@@ -47,9 +47,20 @@ class _MessageBridge(QObject):
         QMessageBox.about(self._parent_widget, title, text)
 
 
+class _StreamEndBridge(QObject):
+    stream_end = Signal(int, object)
+
+    def __init__(self, owner):
+        super().__init__()
+        self._owner = owner
+        self.stream_end.connect(self._owner._handle_camera_stream_end, Qt.QueuedConnection)
+
+
 class _EnrollBridge(QObject):
     capture_progress = Signal(int, int)
     capture_finished = Signal(bool, int, str)
+    train_progress = Signal(int, str)
+    train_finished = Signal(bool, int, int, float, str, str)
 
 def _rebuild_face_training_data():
     app_service = _app_service()
@@ -61,6 +72,7 @@ class MWindow():
         self._closing = False
         self.mui = QUiLoader().load(ui_path('MUi.ui'))
         self._msg_bridge = _MessageBridge(self.mui)
+        self._stream_end_bridge = _StreamEndBridge(self)
         self.mui.setFont(_default_ui_font())
         self.mui.setStyleSheet(_app_stylesheet())
         self.mui.setFixedSize(self.mui.width(), self.mui.height())
@@ -99,9 +111,122 @@ class MWindow():
         ######### ↑↑↑以上代码为显示初始化过程 ########
         self._init_main_pending_hint()
         self._init_backend_mode_hint()
+        self._ensure_runtime_mode_widget()
         self.refresh_model_pending_hint()
         self.refresh_backend_mode_hint()
         self._show_pending_startup_notice()
+
+    def _refresh_runtime_mode_on_all_cameras(self):
+        mode = _app_service().state.realtime_mode
+        for slot in (1, 2, 3, 4):
+            cam = getattr(self, f'cam{slot}', None)
+            if cam is not None:
+                try:
+                    cam.set_runtime_mode(mode)
+                except Exception:
+                    pass
+
+    def _refresh_fps_overlay_on_all_cameras(self):
+        enabled = bool(getattr(_app_service().state, 'show_fps_overlay', False))
+        for slot in (1, 2, 3, 4):
+            cam = getattr(self, f'cam{slot}', None)
+            if cam is not None:
+                try:
+                    cam.set_show_fps_overlay(enabled)
+                except Exception:
+                    pass
+
+    def _runtime_mode_text(self, mode):
+        return {
+            'realtime': '实时优先',
+            'balanced': '平衡模式',
+            'accurate': '高精度',
+        }.get(str(mode).strip().lower(), '平衡模式')
+
+    def _ensure_runtime_mode_widget(self):
+        if hasattr(self, '_runtime_mode_label') and self._runtime_mode_label is not None:
+            return
+        parent = self.mui.groupBox if hasattr(self.mui, 'groupBox') else self.mui
+        layout = parent.layout() if hasattr(parent, 'layout') else None
+        self._runtime_mode_label = QLabel(parent)
+        self._runtime_mode_label.setObjectName('runtimeModeHintLabel')
+        self._runtime_mode_label.setAlignment(Qt.AlignCenter)
+        self._runtime_mode_label.setStyleSheet(
+            'QLabel#runtimeModeHintLabel {'
+            'background:#f4fbf6; color:#0d5b2f; border:1px solid #bee8cf; border-radius:8px; padding:5px 8px; font-weight:600; }'
+        )
+        self._runtime_mode_label.setText('识别策略：' + self._runtime_mode_text(_app_service().state.realtime_mode))
+        self._runtime_mode_label.show()
+        self._runtime_mode_combo = QComboBox(parent)
+        self._runtime_mode_combo.addItems(['实时优先', '平衡模式', '高精度'])
+        self._runtime_mode_combo.currentIndexChanged.connect(self._on_runtime_mode_changed)
+        self._sync_runtime_mode_combo()
+        self._runtime_mode_combo.show()
+        if layout is not None:
+            try:
+                layout.insertWidget(0, self._runtime_mode_label)
+                layout.insertWidget(1, self._runtime_mode_combo)
+            except Exception:
+                pass
+        self._ensure_fps_toggle_widget(parent, layout)
+
+    def _ensure_fps_toggle_widget(self, parent, layout):
+        if hasattr(self, '_fps_toggle_button') and self._fps_toggle_button is not None:
+            return
+        self._fps_toggle_button = QPushButton(parent)
+        self._fps_toggle_button.setObjectName('fpsToggleButton')
+        self._fps_toggle_button.setCheckable(True)
+        self._fps_toggle_button.setCursor(Qt.PointingHandCursor)
+        self._fps_toggle_button.setStyleSheet(
+            'QPushButton#fpsToggleButton {'
+            'background:#f3f8ff; color:#1f3f7a; border:1px solid #c9dafc; border-radius:8px; padding:6px 10px; font-weight:600; }'
+            'QPushButton#fpsToggleButton:checked {'
+            'background:#e1f7e9; color:#116234; border:1px solid #9fd6af; }'
+        )
+        self._fps_toggle_button.clicked.connect(self._on_toggle_fps_overlay)
+        self._sync_fps_toggle_button()
+        self._fps_toggle_button.show()
+        if layout is not None:
+            try:
+                layout.insertWidget(2, self._fps_toggle_button)
+            except Exception:
+                pass
+
+    def _sync_fps_toggle_button(self):
+        button = getattr(self, '_fps_toggle_button', None)
+        if button is None:
+            return
+        enabled = bool(getattr(_app_service().state, 'show_fps_overlay', False))
+        button.blockSignals(True)
+        button.setChecked(enabled)
+        button.setText('隐藏 FPS' if enabled else '显示 FPS')
+        button.setToolTip('切换每个视频窗口左下角的 FPS 显示')
+        button.blockSignals(False)
+
+    def _sync_runtime_mode_combo(self):
+        combo = getattr(self, '_runtime_mode_combo', None)
+        if combo is None:
+            return
+        mapping = {'realtime': 0, 'balanced': 1, 'accurate': 2}
+        idx = mapping.get(_app_service().state.realtime_mode, 1)
+        combo.blockSignals(True)
+        combo.setCurrentIndex(idx)
+        combo.blockSignals(False)
+
+    def _on_runtime_mode_changed(self, index):
+        modes = {0: 'realtime', 1: 'balanced', 2: 'accurate'}
+        mode = modes.get(int(index), 'balanced')
+        _app_service().state.realtime_mode = mode
+        label = getattr(self, '_runtime_mode_label', None)
+        if label is not None:
+            label.setText('识别策略：' + self._runtime_mode_text(mode))
+        self._refresh_runtime_mode_on_all_cameras()
+        self.refresh_backend_mode_hint()
+
+    def _on_toggle_fps_overlay(self, checked):
+        _app_service().state.show_fps_overlay = bool(checked)
+        self._sync_fps_toggle_button()
+        self._refresh_fps_overlay_on_all_cameras()
 
     def _init_main_pending_hint(self):
         if hasattr(self.mui, 'mainPendingHint'):
@@ -157,10 +282,11 @@ class MWindow():
             'unknown': '未知',
         }
         text = mode_map.get(mode, str(mode))
+        strategy_text = self._runtime_mode_text(_app_service().state.realtime_mode)
         if mode == 'deep':
-            self._backend_mode_label.setText(f'当前识别后端：{text} [{provider_text}]')
+            self._backend_mode_label.setText(f'当前识别后端：{text} [{provider_text}] | 策略：{strategy_text}')
         else:
-            self._backend_mode_label.setText(f'当前识别后端：{text}')
+            self._backend_mode_label.setText(f'当前识别后端：{text} | 策略：{strategy_text}')
         self._backend_mode_label.show()
         self._backend_mode_label.raise_()
 
@@ -318,6 +444,7 @@ class MWindow():
         label = getattr(self.mui, runtime.label_name)
         camera = Camera(url, label, _app_service(), on_stream_end=lambda cam: self._on_camera_stream_end(int(slot), cam))
         camera.displayMode = int(displaymode)
+        camera.set_show_fps_overlay(bool(getattr(_app_service().state, 'show_fps_overlay', False)))
         if cameraNamePlace != '':
             camera.nameAndLocation = cameraNamePlace
         setattr(self, runtime.camera_attr, camera)
@@ -335,6 +462,7 @@ class MWindow():
         return False
 
     def close(self):
+        self._closing = True
         for slot in (1, 2, 3, 4):
             self.close_slot(slot, show_message_when_idle=False)
 
@@ -386,10 +514,19 @@ class MWindow():
             self.start_slot(slot, url, name_place, display_mode, allow_duplicate_source=True)
 
     def _on_camera_stream_end(self, slot, cam_obj):
+        # Camera stream callback can come from worker threads.
+        # Always marshal to UI thread before touching any widgets.
+        self._stream_end_bridge.stream_end.emit(int(slot), cam_obj)
+
+    def _handle_camera_stream_end(self, slot, cam_obj):
         """
         回调：摄像头流异常/结束时自动回收主窗口状态，避免“假忙碌”。
-        注意：这里只做状态回收，不直接操作UI控件，以降低线程边界风险。
+        注意：该函数运行在UI线程。
         """
+        if self._closing:
+            return
+        if self.mui is None:
+            return
         runtime = self.ui_controller.get_slot_runtime(int(slot))
         current_cam = getattr(self, runtime.camera_attr, None)
         if current_cam is not cam_obj:
@@ -397,9 +534,13 @@ class MWindow():
         if cam_obj.url in self.cameraList:
             self.cameraList.remove(cam_obj.url)
         setattr(self, runtime.busy_attr, False)
-        label = getattr(self.mui, runtime.label_name, None)
-        if label is not None:
-            label.setPixmap(QPixmap(asset_path('nosignal.png')))
+        try:
+            label = getattr(self.mui, runtime.label_name, None)
+            if label is not None:
+                label.setPixmap(QPixmap(asset_path('nosignal.png')))
+        except RuntimeError:
+            # Main window may already be in teardown.
+            return
         if cam_obj.url == 0 and self._get_system_lock() == int(slot):
             self._set_system_lock(0)
         self._msg_bridge.show_message.emit(
@@ -565,9 +706,13 @@ class LuruWindow():
         self.current_username = ''
         self._pending_status_base_text = '请不要遮挡人脸(•̀ ω •́ )\n录入完成会自行退出^_^ \n耐心等待'
         self._capture_write_index = 1
+        self._train_progress_dialog = None
+        self._train_snapshots = []
         self._enroll_bridge = _EnrollBridge()
         self._enroll_bridge.capture_progress.connect(self._on_capture_progress, Qt.QueuedConnection)
         self._enroll_bridge.capture_finished.connect(self._on_capture_finished, Qt.QueuedConnection)
+        self._enroll_bridge.train_progress.connect(self._on_train_progress, Qt.QueuedConnection)
+        self._enroll_bridge.train_finished.connect(self._on_train_finished, Qt.QueuedConnection)
         self._pending_label = QLabel(self.ui)
         self._pending_label.setObjectName('luruPendingHint')
         self._pending_label.setStyleSheet(
@@ -741,85 +886,108 @@ class LuruWindow():
 
         self._is_training = True
         self._set_enroll_controls_enabled(False)
-        progress = QProgressDialog('正在更新模型，请稍候...', '', 0, 4, self.ui)
-        progress.setWindowTitle('模型更新中')
-        progress.setCancelButton(None)
-        progress.setWindowModality(Qt.ApplicationModal)
-        progress.setMinimumDuration(0)
-        progress.setValue(0)
+        self._train_exit_after_success = bool(exit_after_success)
+        self._train_progress_dialog = QProgressDialog('正在更新模型，请稍候...', '', 0, 4, self.ui)
+        self._train_progress_dialog.setWindowTitle('模型更新中')
+        self._train_progress_dialog.setCancelButton(None)
+        self._train_progress_dialog.setWindowModality(Qt.ApplicationModal)
+        self._train_progress_dialog.setMinimumDuration(0)
+        self._train_progress_dialog.setValue(0)
+        self._train_progress_dialog.show()
         QApplication.processEvents()
 
         snapshots = self.main_window.capture_busy_slots()
         self.main_window.close_slots_from_snapshots(snapshots)
+        self._train_snapshots = snapshots
+        threading.Thread(
+            target=self._train_model_worker,
+            daemon=True,
+        ).start()
+        return True
+
+    def _train_model_worker(self):
         start_ts = time.time()
         sample_count = 0
         user_count = len(_app_service().state.user_dic)
-
+        detail = ''
+        ok = False
         try:
-            progress.setLabelText('步骤 1/4：检查样本...')
-            progress.setValue(1)
-            QApplication.processEvents()
+            self._enroll_bridge.train_progress.emit(1, '步骤 1/4：检查样本...')
             samples, labels = _rebuild_face_training_data()
             sample_count = len(samples)
             user_count = len(_app_service().state.user_dic)
             if len(samples) != len(labels):
-                QMessageBox.about(self.ui, '错误', f'训练数据异常：样本数={len(samples)}，标签数={len(labels)}')
-                return False
+                detail = f'训练数据异常：样本数={len(samples)}，标签数={len(labels)}'
+                return
 
-            progress.setLabelText('步骤 2/4：训练并写入模型...')
-            progress.setValue(2)
-            QApplication.processEvents()
             if not _app_service().pipeline.ensure_face_service_ready():
-                reason = _app_service().pipeline.face_service_error_text() or '深度识别依赖未安装'
-                QMessageBox.about(
-                    self.ui,
-                    '环境未就绪',
-                    '当前环境不支持更新模型。\n'
-                    '请先安装深度识别依赖后再重试：\n'
-                    'insightface、onnxruntime（情绪识别还需 tensorflow）\n\n'
-                    f'详细原因：{reason}',
-                )
-                return False
+                detail = _app_service().pipeline.face_service_error_text() or '深度识别依赖未安装'
+                return
+
             backend_mode = _app_service().pipeline.current_backend_mode()
             if backend_mode == 'lbph':
-                progress.setLabelText('步骤 2/4：训练并写入模型（LBPH降级模式）...')
+                self._enroll_bridge.train_progress.emit(2, '步骤 2/4：训练并写入模型（LBPH降级模式）...')
             elif backend_mode == 'lite':
-                progress.setLabelText('步骤 2/4：训练并写入模型（Lite应急模式）...')
-                QApplication.processEvents()
-            ok = _app_service().rebuild_and_train()
+                self._enroll_bridge.train_progress.emit(2, '步骤 2/4：训练并写入模型（Lite应急模式）...')
+            else:
+                self._enroll_bridge.train_progress.emit(2, '步骤 2/4：训练并写入模型...')
+
+            ok = _app_service().train_with_samples(samples, labels)
             if not ok:
-                detail = _app_service().pipeline.last_train_error_text()
-                if detail:
-                    QMessageBox.about(self.ui, '错误', f'模型更新失败，请检查样本和模型环境。\n\n详细原因：{detail}')
-                else:
-                    QMessageBox.about(self.ui, '错误', '模型更新失败，请检查样本和模型环境。')
-                return False
+                detail = _app_service().pipeline.last_train_error_text() or '模型更新失败，请检查样本和模型环境。'
+                return
 
-            progress.setLabelText('步骤 3/4：刷新状态...')
-            progress.setValue(3)
-            QApplication.processEvents()
             _app_service().state.update_user_stats()
-            self._clear_model_pending_ui()
-
             elapsed = max(0.01, time.time() - start_ts)
-            progress.setLabelText('步骤 4/4：完成')
-            progress.setValue(4)
-            QApplication.processEvents()
-            QMessageBox.about(
-                self.ui,
-                '更新完成',
-                f'模型更新成功。\n训练人数：{user_count}\n样本总数：{sample_count}\n耗时：{elapsed:.2f} 秒',
-            )
+            self._enroll_bridge.train_progress.emit(3, '步骤 3/4：刷新状态...')
+            self._enroll_bridge.train_progress.emit(4, '步骤 4/4：完成')
+            self._enroll_bridge.train_finished.emit(True, user_count, sample_count, elapsed, '', '')
         finally:
+            if not ok:
+                self._enroll_bridge.train_finished.emit(False, user_count, sample_count, max(0.01, time.time() - start_ts), detail, '')
+
+    def _on_train_progress(self, step, message):
+        progress = getattr(self, '_train_progress_dialog', None)
+        if progress is None:
+            return
+        try:
+            progress.setLabelText(message)
+            progress.setValue(int(step))
+            QApplication.processEvents()
+        except Exception:
+            pass
+
+    def _on_train_finished(self, success, user_count, sample_count, elapsed, detail, _reserved):
+        progress = getattr(self, '_train_progress_dialog', None)
+        if progress is not None:
+            try:
+                progress.close()
+            except Exception:
+                pass
+            self._train_progress_dialog = None
+        snapshots = getattr(self, '_train_snapshots', [])
+        try:
             self.main_window.restore_slots_from_snapshots(snapshots)
-            progress.close()
-            self._set_enroll_controls_enabled(True)
-            self._is_training = False
-
-        if exit_after_success:
+        except Exception:
+            pass
+        self._train_snapshots = []
+        self._set_enroll_controls_enabled(True)
+        self._is_training = False
+        if not success:
+            if detail:
+                QMessageBox.about(self.ui, '错误', f'模型更新失败，请检查样本和模型环境。\n\n详细原因：{detail}')
+            else:
+                QMessageBox.about(self.ui, '错误', '模型更新失败，请检查样本和模型环境。')
+            return
+        self._clear_model_pending_ui()
+        QMessageBox.about(
+            self.ui,
+            '更新完成',
+            f'模型更新成功。\n训练人数：{user_count}\n样本总数：{sample_count}\n耗时：{elapsed:.2f} 秒',
+        )
+        if getattr(self, '_train_exit_after_success', False):
             self.closeQuit(force=True)
-            return True
-
+            return
         next_action = QMessageBox.question(
             self.ui,
             '后续操作',
@@ -829,7 +997,6 @@ class LuruWindow():
         )
         if next_action == QMessageBox.No:
             self.closeQuit(force=True)
-        return True
 
     def closeQuit(self, force=False):
         if self._is_training:

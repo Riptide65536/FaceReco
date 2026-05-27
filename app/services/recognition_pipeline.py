@@ -129,6 +129,8 @@ class RecognitionPipeline:
     def rebuild_training_data(self, data_repo: DataRepository) -> tuple[list[np.ndarray], list[int]]:
         samples: list[np.ndarray] = []
         labels: list[int] = []
+        backend_mode = self.current_backend_mode()
+        deep_like_backend = backend_mode in {"deep", "lite"}
 
         self._refresh_service_labels()
         for user_id in sorted(self.state.user_dic.keys()):
@@ -142,6 +144,12 @@ class RecognitionPipeline:
                     continue
                 img_np = np.array(img)
                 if img_np.size == 0:
+                    continue
+                if deep_like_backend:
+                    # Deep/lite training computes embeddings from the whole sample.
+                    # Skipping face re-detection here avoids duplicated heavy work.
+                    samples.append(img_np)
+                    labels.append(int(user_id))
                     continue
                 faces = self._detect_faces_for_training(img_np)
                 if not faces:

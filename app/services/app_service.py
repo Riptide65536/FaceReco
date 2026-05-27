@@ -62,6 +62,33 @@ class AppService:
         self.persist_training_state()
         return ok
 
+    def train_with_samples(self, samples, labels) -> bool:
+        self.state.face_samples = list(samples)
+        self.state.id_lists = list(labels)
+        if self.pipeline.cv2 is None:
+            self.state.update_user_stats()
+            self.persist_training_state()
+            return len(self.state.face_samples) >= 0
+        if not self.pipeline.ensure_face_service_ready():
+            self.state.update_user_stats()
+            self.persist_training_state()
+            return False
+        if len(self.state.face_samples) == 0:
+            model_path = self.data_repo.model_file_path()
+            if model_path.exists():
+                try:
+                    model_path.unlink()
+                except OSError:
+                    pass
+            ok = True
+        else:
+            ok = self.pipeline.train_and_save(self.state.face_samples, self.state.id_lists)
+        if ok:
+            self.data_repo.clear_model_pending()
+        self.state.update_user_stats()
+        self.persist_training_state()
+        return ok
+
     def reset_face_data(self) -> None:
         self.data_repo.clear_face_data_keep_py()
         self.data_repo.reset_model_dir()

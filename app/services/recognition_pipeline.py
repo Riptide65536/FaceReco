@@ -102,6 +102,61 @@ class RecognitionPipeline:
         except Exception:
             return "unknown"
 
+    @staticmethod
+    def _provider_alias(provider_name: str) -> str:
+        mapping = {
+            "CUDAExecutionProvider": "CUDA",
+            "CPUExecutionProvider": "CPU",
+            "TensorrtExecutionProvider": "TensorRT",
+        }
+        return mapping.get(str(provider_name), str(provider_name).replace("ExecutionProvider", "") or "unknown")
+
+    def current_provider_display_text(self) -> str:
+        backend_mode = self.current_backend_mode()
+        if backend_mode == "lbph":
+            return "ArcFace：未启用（LBPH 降级）"
+        if backend_mode == "lite":
+            return "ArcFace：未启用（Lite 应急）"
+        if backend_mode == "unavailable":
+            return "ArcFace：不可用"
+        if backend_mode != "deep":
+            return "ArcFace：未知"
+
+        if self.face_service is None:
+            return "ArcFace：不可用"
+        try:
+            providers = list(getattr(self.face_service, "_deep_providers", None) or [])
+        except Exception:
+            providers = []
+        if not providers:
+            return "ArcFace：未知"
+
+        primary = self._provider_alias(providers[0])
+        fallback = [self._provider_alias(item) for item in providers[1:]]
+        if fallback:
+            return f"ArcFace：{primary}（回退 {' / '.join(fallback)}）"
+        return f"ArcFace：{primary}"
+
+    def current_provider_tooltip(self) -> str:
+        backend_mode = self.current_backend_mode()
+        provider_text = self.current_provider_text()
+        display_text = self.current_provider_display_text()
+        if backend_mode == "deep":
+            return (
+                f"{display_text}\n"
+                f"ONNX Runtime Providers：{provider_text}\n"
+                "这表示 ArcFace / InsightFace 的识别链优先使用前面的 Provider，失败时再回退。"
+            )
+        if backend_mode == "lbph":
+            return (
+                "当前识别后端为 LBPH 降级模式，ArcFace / InsightFace 深度识别链当前未启用。"
+            )
+        if backend_mode == "lite":
+            return (
+                "当前识别后端为 Lite 应急模式，ArcFace / InsightFace 深度识别链当前未启用。"
+            )
+        return f"{display_text}\nONNX Runtime Providers：{provider_text}"
+
     def face_service_error_text(self) -> str:
         return self._face_service_error.strip()
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import datetime
 import numpy as np
 import pytest
 from concurrent.futures import ThreadPoolExecutor
@@ -25,6 +26,20 @@ def test_app_state_defaults_are_usable():
     state = AppState()
     assert isinstance(state.user_dic, dict)
     assert state.show_fps_overlay is False
+
+
+def test_app_state_custom_attendance_session_is_resettable():
+    state = AppState()
+    assert state.active_custom_attendance_label() == ""
+    started = state.start_custom_attendance("实验课签到")
+    assert started == "实验课签到"
+    assert state.active_custom_attendance_label() == "实验课签到"
+    assert state.has_custom_attendance_recorded("alice") is False
+    state.mark_custom_attendance_recorded("alice")
+    assert state.has_custom_attendance_recorded("alice") is True
+    state.stop_custom_attendance()
+    assert state.active_custom_attendance_label() == ""
+    assert state.has_custom_attendance_recorded("alice") is False
 
 
 def test_camera_motion_and_bbox_helpers():
@@ -236,7 +251,10 @@ def test_camera_submit_detection_task_scales_boxes():
         )
         predicted, key = future.result(timeout=2.0)
     finally:
-        camera._predict_pool.shutdown(wait=False, cancel_futures=True)
+        try:
+            camera._predict_pool.shutdown(wait=False, cancel_futures=True)
+        except TypeError:
+            camera._predict_pool.shutdown(wait=False)
 
     assert key == "frame-key"
     assert predicted == [
@@ -328,3 +346,42 @@ def test_camera_runtime_mode_supports_unlimited_realtime_fps(monkeypatch):
 
     assert camera._emit_max_fps == 0.0
     assert camera._emit_min_gap_s == 0.0
+
+
+def test_camera_custom_attendance_saves_regular_then_custom_once():
+    try:
+        from app.runtime.camera_stream import Camera
+    except ModuleNotFoundError:
+        pytest.skip("PySide2 is not available in this test environment")
+
+    class _FakeSqlRepo:
+        def __init__(self):
+            self.saved = []
+
+        def get_daily_attendance_types(self, name, _day):
+            return [entry["attendance_type"] for entry in self.saved if entry["name"] == name]
+
+        def save_recognition_event(self, name, location, timepoint, emotion, attendance_type=None):
+            self.saved.append(
+                {
+                    "name": name,
+                    "location": location,
+                    "timepoint": timepoint,
+                    "emotion": emotion,
+                    "attendance_type": attendance_type or "上班打卡",
+                }
+            )
+            return True
+
+    camera = Camera.__new__(Camera)
+    state = AppState()
+    state.start_custom_attendance("实验课签到")
+    camera._app_service = type("Svc", (), {"state": state})()
+    camera.nameAndLocation = "gate-a"
+    repo = _FakeSqlRepo()
+    now = datetime.datetime(2026, 5, 27, 8, 40)
+
+    assert camera._save_detected_recognition_event(repo, "linhao", "中性", now) is True
+    assert [item["attendance_type"] for item in repo.saved] == ["上班打卡", "实验课签到"]
+    assert camera._save_detected_recognition_event(repo, "linhao", "中性", now) is False
+    assert [item["attendance_type"] for item in repo.saved] == ["上班打卡", "实验课签到"]

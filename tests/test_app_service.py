@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from app.services.app_service import AppService
+from app.services.recognition_pipeline import RecognitionPipeline
 from app.repositories import SqlRepository
 from data.sql_helper import SqlF
 
@@ -49,3 +50,33 @@ def test_sql_repository_account_roundtrip(tmp_path):
         assert "u1" in accounts
     finally:
         sql_repo.close()
+
+
+class _DummyFaceService:
+    def __init__(self, mode, providers):
+        self._mode = mode
+        self._deep_providers = providers
+
+    def backend_mode(self):
+        return self._mode
+
+
+def test_recognition_pipeline_provider_display_for_cuda_fallback_cpu():
+    pipeline = RecognitionPipeline.__new__(RecognitionPipeline)
+    pipeline.face_service = _DummyFaceService(
+        "deep",
+        ["CUDAExecutionProvider", "CPUExecutionProvider"],
+    )
+
+    assert pipeline.current_provider_display_text() == "ArcFace：CUDA（回退 CPU）"
+    tooltip = pipeline.current_provider_tooltip()
+    assert "CUDAExecutionProvider > CPUExecutionProvider" in tooltip
+    assert "ArcFace：CUDA（回退 CPU）" in tooltip
+
+
+def test_recognition_pipeline_provider_display_for_lbph_fallback():
+    pipeline = RecognitionPipeline.__new__(RecognitionPipeline)
+    pipeline.face_service = _DummyFaceService("lbph", [])
+
+    assert pipeline.current_provider_display_text() == "ArcFace：未启用（LBPH 降级）"
+    assert "LBPH 降级模式" in pipeline.current_provider_tooltip()

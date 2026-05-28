@@ -7,6 +7,7 @@ import hmac
 import logging
 import os
 import sqlite3
+import threading
 from typing import Any, Optional
 
 from services.attendance_service import AttendanceService
@@ -23,6 +24,30 @@ LOGGER = logging.getLogger(__name__)
 class SqlF:
     """Database facade used by the legacy UI and service tests."""
 
+    _LOCKED_METHODS = {
+        "_init_schema",
+        "_ensure_default_admin",
+        "loginAccountPassword",
+        "register",
+        "getAllaccount",
+        "saveNameTimePic",
+        "resetDB",
+        "tableWidgetDisplay",
+        "getAllname",
+        "getAllplace",
+        "getAllAttendanceTypes",
+        "query_logs",
+        "query_logs_with_emotion",
+        "saveFaceFeature",
+        "getAttendanceReport",
+        "saveAttendanceRecord",
+        "queryAttendanceByUser",
+        "getAbsenceList",
+        "getAttendanceSummary",
+        "exportAttendanceReport",
+        "dbclose",
+    }
+
     def __init__(self, backend: Optional[str] = None, sqlite_path: Optional[str] = None):
         self.backend = (backend or os.getenv("FACE_DB_BACKEND", "auto")).lower()
         self.sqlite_path = sqlite_path or os.getenv("FACE_DB_SQLITE_PATH", "facial_system.db")
@@ -30,8 +55,23 @@ class SqlF:
         self.cursor: Any = None
         self.param = "%s"
         self.attendance = AttendanceService()
+        self._db_lock = threading.RLock()
         self._connect()
         self._init_schema()
+
+    def __getattribute__(self, name: str):
+        attr = object.__getattribute__(self, name)
+        if name not in object.__getattribute__(self, "_LOCKED_METHODS"):
+            return attr
+        if not callable(attr):
+            return attr
+
+        def _locked(*args, **kwargs):
+            lock = object.__getattribute__(self, "_db_lock")
+            with lock:
+                return attr(*args, **kwargs)
+
+        return _locked
 
     def _connect(self) -> None:
         if self.backend in {"mysql", "auto"} and pymysql is not None:
@@ -54,7 +94,11 @@ class SqlF:
                     raise
                 LOGGER.warning("MySQL unavailable, falling back to SQLite: %s", exc)
 
-        self.db = sqlite3.connect(self.sqlite_path, detect_types=sqlite3.PARSE_DECLTYPES)
+        self.db = sqlite3.connect(
+            self.sqlite_path,
+            detect_types=sqlite3.PARSE_DECLTYPES,
+            check_same_thread=False,
+        )
         self.cursor = self.db.cursor()
         self.backend = "sqlite"
         self.param = "?"
@@ -257,6 +301,14 @@ class SqlF:
 
     def getAllplace(self) -> list[tuple[str]]:
         self.cursor.execute("SELECT DISTINCT location FROM recognition_logs WHERE location IS NOT NULL ORDER BY location")
+        return self.cursor.fetchall()
+
+    def getAllAttendanceTypes(self) -> list[tuple[str]]:
+        self.cursor.execute(
+            "SELECT DISTINCT attendance_type FROM recognition_logs "
+            "WHERE attendance_type IS NOT NULL AND attendance_type <> '' "
+            "ORDER BY attendance_type"
+        )
         return self.cursor.fetchall()
 
     def query_logs(
@@ -482,8 +534,18 @@ class SqlF:
             return False, 0
 
     def dbclose(self) -> None:
+        if self.cursor is not None:
+            try:
+                self.cursor.close()
+            except Exception:
+                pass
+            self.cursor = None
         if self.db is not None:
-            self.db.close()
+            try:
+                self.db.close()
+            except Exception:
+                pass
+            self.db = None
 
     @staticmethod
     def _hash_password(password: str) -> str:

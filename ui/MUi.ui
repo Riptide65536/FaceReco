@@ -22,7 +22,7 @@
      <height>920</height>
     </rect>
    </property>
-   <layout class="QVBoxLayout" name="verticalLayout" stretch="11,1">
+   <layout class="QVBoxLayout" name="verticalLayout" stretch="9,2">
     <item>
      <widget class="QGroupBox" name="groupBox1">
       <property name="title">
@@ -65,16 +65,37 @@
       <property name="title">
        <string>操作区</string>
       </property>
-      <layout class="QHBoxLayout" name="horizontalLayout">
-       <property name="spacing"><number>32</number></property>
-       <property name="leftMargin"><number>15</number></property>
-       <property name="rightMargin"><number>15</number></property>
+      <property name="minimumSize">
+       <size>
+        <width>0</width>
+        <height>156</height>
+       </size>
+      </property>
+      <layout class="QVBoxLayout" name="operationLayout">
+       <property name="spacing">
+        <number>10</number>
+       </property>
+       <property name="leftMargin">
+        <number>15</number>
+       </property>
+       <property name="topMargin">
+        <number>14</number>
+       </property>
+       <property name="rightMargin">
+        <number>15</number>
+       </property>
+       <property name="bottomMargin">
+        <number>12</number>
+       </property>
        <item>
-        <widget class="QLabel" name="mainBackendHint">
+        <widget class="QLabel" name="mainPendingHint">
+         <property name="visible">
+          <bool>false</bool>
+         </property>
          <property name="minimumSize">
           <size>
-           <width>240</width>
-           <height>0</height>
+           <width>0</width>
+           <height>30</height>
           </size>
          </property>
          <property name="font">
@@ -84,49 +105,203 @@
           </font>
          </property>
          <property name="styleSheet">
-          <string notr="true">QLabel {
-background:#eef4ff;
-color:#1f3f7a;
-border:1px solid #c9dafc;
+          <string notr="true">QLabel#mainPendingHint {
+background:#fff5f5;
+color:#a61b1b;
+border:1px solid #f2b8b8;
 border-radius:8px;
-padding:4px 8px;
+padding:6px 10px;
 font-weight:600;
 }</string>
          </property>
          <property name="text">
-          <string>当前识别后端：初始化中</string>
+          <string>模型待更新：请进入“录入人脸及管理”，点击“更新模型”。</string>
          </property>
          <property name="alignment">
           <set>Qt::AlignCenter</set>
          </property>
+         <property name="wordWrap">
+          <bool>true</bool>
+         </property>
         </widget>
        </item>
        <item>
-        <widget class="QPushButton" name="addButton">
-         <property name="font"><font><family>Microsoft YaHei UI</family><pointsize>11</pointsize></font></property>
-         <property name="text"><string>添加摄像头</string></property>
-         <property name="icon"><iconset><normaloff>assets/attachment/addCam.png</normaloff>assets/attachment/addCam.png</iconset></property>
+        <widget class="QWidget" name="operationToolbarHost">
+         <property name="minimumSize">
+          <size>
+           <width>0</width>
+           <height>38</height>
+          </size>
+         </property>
+         <layout class="QHBoxLayout" name="operationToolbarLayout">
+          <property name="spacing">
+           <number>10</number>
+          </property>
+          <property name="leftMargin">
+           <number>0</number>
+          </property>
+          <property name="topMargin">
+           <number>0</number>
+          </property>
+          <property name="rightMargin">
+           <number>0</number>
+          </property>
+          <property name="bottomMargin">
+           <number>0</number>
+          </property>
+          <item>
+           <widget class="QLabel" name="mainBackendHint">
+            <property name="minimumSize">
+             <size>
+              <width>180</width>
+              <height>32</height>
+             </size>
+            </property>
+            <property name="font">
+             <font>
+              <family>Microsoft YaHei UI</family>
+              <pointsize>10</pointsize>
+             </font>
+            </property>
+            <property name="styleSheet">
+             <string notr="true">QLabel#mainBackendHint {
+background:#eef4ff;
+color:#1f3f7a;
+border:1px solid #c9dafc;
+border-radius:8px;
+padding:5px 8px;
+font-weight:600;
+}</string>
+            </property>
+            <property name="text">
+             <string>识别后端：初始化中</string>
+            </property>
+            <property name="alignment">
+             <set>Qt::AlignCenter</set>
+            </property>
+           </widget>
+          </item>
+         </layout>
         </widget>
        </item>
        <item>
-        <widget class="QPushButton" name="delButton">
-         <property name="font"><font><family>Microsoft YaHei UI</family><pointsize>11</pointsize></font></property>
-         <property name="text"><string>删除摄像头</string></property>
-         <property name="icon"><iconset><normaloff>assets/attachment/delCam.png</normaloff>assets/attachment/delCam.png</iconset></property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QPushButton" name="luruButton">
-         <property name="font"><font><family>Microsoft YaHei UI</family><pointsize>11</pointsize></font></property>
-         <property name="text"><string>录入人脸及管理</string></property>
-         <property name="icon"><iconset><normaloff>assets/attachment/luru.png</normaloff>assets/attachment/luru.png</iconset></property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QPushButton" name="logButton">
-         <property name="font"><font><family>Microsoft YaHei UI</family><pointsize>11</pointsize></font></property>
-         <property name="text"><string>日志查看</string></property>
-         <property name="icon"><iconset><normaloff>assets/attachment/log.png</normaloff>assets/attachment/log.png</iconset></property>
+        <widget class="QWidget" name="operationButtonRow">
+         <property name="minimumSize">
+          <size>
+           <width>0</width>
+           <height>40</height>
+          </size>
+         </property>
+         <layout class="QHBoxLayout" name="operationButtonLayout">
+          <property name="spacing">
+           <number>14</number>
+          </property>
+          <property name="leftMargin">
+           <number>0</number>
+          </property>
+          <property name="topMargin">
+           <number>0</number>
+          </property>
+          <property name="rightMargin">
+           <number>0</number>
+          </property>
+          <property name="bottomMargin">
+           <number>0</number>
+          </property>
+          <item>
+           <spacer name="buttonRowSpacerStart">
+            <property name="orientation">
+             <enum>Qt::Horizontal</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>40</width>
+              <height>20</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+          <item>
+           <widget class="QPushButton" name="addButton">
+            <property name="font"><font><family>Microsoft YaHei UI</family><pointsize>11</pointsize></font></property>
+            <property name="text"><string>添加摄像头</string></property>
+            <property name="icon"><iconset><normaloff>assets/attachment/addCam.png</normaloff>assets/attachment/addCam.png</iconset></property>
+           </widget>
+          </item>
+          <item>
+           <spacer name="buttonRowSpacer1">
+            <property name="orientation">
+             <enum>Qt::Horizontal</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>20</width>
+              <height>20</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+          <item>
+           <widget class="QPushButton" name="delButton">
+            <property name="font"><font><family>Microsoft YaHei UI</family><pointsize>11</pointsize></font></property>
+            <property name="text"><string>删除摄像头</string></property>
+            <property name="icon"><iconset><normaloff>assets/attachment/delCam.png</normaloff>assets/attachment/delCam.png</iconset></property>
+           </widget>
+          </item>
+          <item>
+           <spacer name="buttonRowSpacer2">
+            <property name="orientation">
+             <enum>Qt::Horizontal</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>20</width>
+              <height>20</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+          <item>
+           <widget class="QPushButton" name="luruButton">
+            <property name="font"><font><family>Microsoft YaHei UI</family><pointsize>11</pointsize></font></property>
+            <property name="text"><string>录入人脸及管理</string></property>
+            <property name="icon"><iconset><normaloff>assets/attachment/luru.png</normaloff>assets/attachment/luru.png</iconset></property>
+           </widget>
+          </item>
+          <item>
+           <spacer name="buttonRowSpacer3">
+            <property name="orientation">
+             <enum>Qt::Horizontal</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>20</width>
+              <height>20</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+          <item>
+           <widget class="QPushButton" name="logButton">
+            <property name="font"><font><family>Microsoft YaHei UI</family><pointsize>11</pointsize></font></property>
+            <property name="text"><string>日志查看</string></property>
+            <property name="icon"><iconset><normaloff>assets/attachment/log.png</normaloff>assets/attachment/log.png</iconset></property>
+           </widget>
+          </item>
+          <item>
+           <spacer name="buttonRowSpacerEnd">
+            <property name="orientation">
+             <enum>Qt::Horizontal</enum>
+            </property>
+            <property name="sizeHint" stdset="0">
+             <size>
+              <width>40</width>
+              <height>20</height>
+             </size>
+            </property>
+           </spacer>
+          </item>
+         </layout>
         </widget>
        </item>
       </layout>

@@ -285,6 +285,26 @@ class SqlRepository:
             status=status,
         )
 
+    def get_daily_attendance_types(self, name: str, day: dt.datetime) -> list[str]:
+        start_time = day.replace(hour=0, minute=0, second=0, microsecond=0)
+        end_time = day.replace(hour=23, minute=59, second=59, microsecond=999999)
+        rows = self.db.query_logs_with_emotion(
+            name=name,
+            location=None,
+            start_time=start_time,
+            end_time=end_time,
+            attendance_type=None,
+            status=None,
+        )
+        result: list[str] = []
+        for row in rows:
+            if len(row) < 5:
+                continue
+            value = str(row[4] if row[4] is not None else "").strip()
+            if value:
+                result.append(value)
+        return result
+
     def get_absence_list(self, expected_names: list[str], day: dt.date | None = None) -> list[str]:
         return self.db.getAbsenceList(expected_names, day=day)
 
@@ -316,6 +336,9 @@ class SqlRepository:
 
     def get_all_places(self):
         return self.db.getAllplace()
+
+    def get_all_attendance_types(self):
+        return self.db.getAllAttendanceTypes()
 
     def reset_logs(self) -> bool:
         return bool(self.db.resetDB())

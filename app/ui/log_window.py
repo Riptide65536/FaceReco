@@ -47,7 +47,7 @@ class LogWindow:
         allplace = self.sql_repo.get_all_places()
         for i in allplace:
             self.ui.comboBox.addItem(i[0])
-        self.comboAttendanceType.addItems(['任何类型', '上班打卡', '下班打卡', '外出登记', '重复识别', '未识别'])
+        self._refresh_attendance_type_filters()
         self.comboStatus.addItems(['任何状态', '正常', '迟到', '早退', '缺勤', '已记录', '异常'])
 
         default_start = nowdatetime - datetime.timedelta(days=30)
@@ -107,6 +107,24 @@ class LogWindow:
         grid.addWidget(self.btnAbsence, 1, 10)
         grid.addWidget(self.btnSummary, 2, 10)
         grid.addWidget(self.btnExport, 1, 11, 2, 1)
+
+    def _refresh_attendance_type_filters(self):
+        defaults = ['任何类型', '上班打卡', '下班打卡', '外出登记', '重复识别', '未识别']
+        seen = set()
+        self.comboAttendanceType.clear()
+        for item in defaults:
+            if item in seen:
+                continue
+            self.comboAttendanceType.addItem(item)
+            seen.add(item)
+        for row in self.sql_repo.get_all_attendance_types():
+            if not row:
+                continue
+            value = str(row[0] if row[0] is not None else '').strip()
+            if (not value) or (value in seen):
+                continue
+            self.comboAttendanceType.addItem(value)
+            seen.add(value)
 
     def showAbsenceList(self):
         target_day = self.ui.dateTimeEdit1.dateTime().toString("yyyy-MM-dd")

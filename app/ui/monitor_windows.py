@@ -1,6 +1,17 @@
 ﻿from __future__ import annotations
 
-from PySide2.QtWidgets import QMessageBox, QProgressDialog, QInputDialog, QApplication, QLabel, QComboBox, QPushButton
+from PySide2.QtWidgets import (
+    QMessageBox,
+    QProgressDialog,
+    QInputDialog,
+    QApplication,
+    QLabel,
+    QComboBox,
+    QPushButton,
+    QLineEdit,
+    QWidget,
+    QHBoxLayout,
+)
 from PySide2.QtUiTools import QUiLoader
 from PySide2.QtGui import QPixmap
 from PySide2.QtCore import Qt, QObject, Signal
@@ -87,6 +98,15 @@ class MWindow():
         self.ui_controller = MainUIController(self)
         self._main_pending_label = None
         self._backend_mode_label = None
+        self._provider_label = None
+        self._toolbar_widget = None
+        self._toolbar_layout = None
+        self._runtime_mode_label = None
+        self._runtime_mode_combo = None
+        self._fps_toggle_button = None
+        self._custom_signin_label = None
+        self._custom_signin_input = None
+        self._custom_signin_button = None
         self._pending_notice_shown = False
         self._operation_group_title_base = self.mui.groupBox.title() if hasattr(self.mui, 'groupBox') else '操作区'
         self._luru_button_base_text = self.mui.luruButton.text()
@@ -109,12 +129,18 @@ class MWindow():
             return
 
         ######### ↑↑↑以上代码为显示初始化过程 ########
+        self._expand_main_window_for_toolbar()
         self._init_main_pending_hint()
         self._init_backend_mode_hint()
         self._ensure_runtime_mode_widget()
+        self._refresh_operation_toolbar_geometry()
         self.refresh_model_pending_hint()
         self.refresh_backend_mode_hint()
         self._show_pending_startup_notice()
+
+    def _expand_main_window_for_toolbar(self):
+        if hasattr(self.mui, 'groupBox'):
+            self.mui.groupBox.setMinimumHeight(156)
 
     def _refresh_runtime_mode_on_all_cameras(self):
         mode = _app_service().state.realtime_mode
@@ -146,8 +172,10 @@ class MWindow():
     def _ensure_runtime_mode_widget(self):
         if hasattr(self, '_runtime_mode_label') and self._runtime_mode_label is not None:
             return
-        parent = self.mui.groupBox if hasattr(self.mui, 'groupBox') else self.mui
-        layout = parent.layout() if hasattr(parent, 'layout') else None
+        self._ensure_operation_toolbar()
+        parent = self._toolbar_widget if self._toolbar_widget is not None else (
+            self.mui.groupBox if hasattr(self.mui, 'groupBox') else self.mui
+        )
         self._runtime_mode_label = QLabel(parent)
         self._runtime_mode_label.setObjectName('runtimeModeHintLabel')
         self._runtime_mode_label.setAlignment(Qt.AlignCenter)
@@ -155,22 +183,62 @@ class MWindow():
             'QLabel#runtimeModeHintLabel {'
             'background:#f4fbf6; color:#0d5b2f; border:1px solid #bee8cf; border-radius:8px; padding:5px 8px; font-weight:600; }'
         )
-        self._runtime_mode_label.setText('识别策略：' + self._runtime_mode_text(_app_service().state.realtime_mode))
+        self._runtime_mode_label.setMinimumWidth(88)
+        self._runtime_mode_label.setText('识别策略')
         self._runtime_mode_label.show()
         self._runtime_mode_combo = QComboBox(parent)
         self._runtime_mode_combo.addItems(['实时优先', '平衡模式', '高精度'])
+        self._runtime_mode_combo.setMinimumWidth(128)
         self._runtime_mode_combo.currentIndexChanged.connect(self._on_runtime_mode_changed)
         self._sync_runtime_mode_combo()
         self._runtime_mode_combo.show()
-        if layout is not None:
+        self._toolbar_layout.addWidget(self._runtime_mode_label)
+        self._toolbar_layout.addWidget(self._runtime_mode_combo)
+        self._ensure_fps_toggle_widget(parent)
+        if self._backend_mode_label is not None and self._toolbar_layout.indexOf(self._backend_mode_label) < 0:
+            self._backend_mode_label.setMinimumWidth(140)
+            self._toolbar_layout.addWidget(self._backend_mode_label)
+        if self._provider_label is not None and self._toolbar_layout.indexOf(self._provider_label) < 0:
+            self._toolbar_layout.addWidget(self._provider_label, 1)
+        self._ensure_custom_signin_widgets(parent)
+        self._toolbar_layout.addStretch(1)
+
+    def _ensure_operation_toolbar(self):
+        if self._toolbar_widget is not None and self._toolbar_layout is not None:
+            return
+        group_box = self.mui.groupBox if hasattr(self.mui, 'groupBox') else self.mui
+        group_box.setMinimumHeight(156)
+        if hasattr(self.mui, 'operationToolbarHost') and self.mui.operationToolbarHost is not None:
+            self._toolbar_widget = self.mui.operationToolbarHost
+            self._toolbar_layout = self._toolbar_widget.layout()
+        else:
+            self._toolbar_widget = QWidget(group_box)
+            self._toolbar_widget.setObjectName('operationToolbar')
+            self._toolbar_layout = QHBoxLayout(self._toolbar_widget)
+            self._toolbar_layout.setContentsMargins(0, 0, 0, 0)
+            self._toolbar_layout.setSpacing(10)
+            group_layout = group_box.layout() if hasattr(group_box, 'layout') else None
+            if group_layout is not None:
+                group_layout.insertWidget(1, self._toolbar_widget)
+        if self._toolbar_layout is not None:
+            self._toolbar_layout.setContentsMargins(0, 0, 0, 0)
+            self._toolbar_layout.setSpacing(10)
+        if hasattr(self.mui, 'mainBackendHint'):
             try:
-                layout.insertWidget(0, self._runtime_mode_label)
-                layout.insertWidget(1, self._runtime_mode_combo)
+                self._toolbar_layout.removeWidget(self.mui.mainBackendHint)
             except Exception:
                 pass
-        self._ensure_fps_toggle_widget(parent, layout)
+        self._provider_label = QLabel(self._toolbar_widget)
+        self._provider_label.setObjectName('providerHintLabel')
+        self._provider_label.setAlignment(Qt.AlignCenter)
+        self._provider_label.setMinimumWidth(260)
+        self._provider_label.setStyleSheet(
+            'QLabel#providerHintLabel {'
+            'background:#f8fbff; color:#24467f; border:1px solid #d8e4fb; border-radius:8px; padding:5px 8px; font-weight:600; }'
+        )
+        self._toolbar_widget.show()
 
-    def _ensure_fps_toggle_widget(self, parent, layout):
+    def _ensure_fps_toggle_widget(self, parent):
         if hasattr(self, '_fps_toggle_button') and self._fps_toggle_button is not None:
             return
         self._fps_toggle_button = QPushButton(parent)
@@ -186,11 +254,35 @@ class MWindow():
         self._fps_toggle_button.clicked.connect(self._on_toggle_fps_overlay)
         self._sync_fps_toggle_button()
         self._fps_toggle_button.show()
-        if layout is not None:
-            try:
-                layout.insertWidget(2, self._fps_toggle_button)
-            except Exception:
-                pass
+        self._fps_toggle_button.setMinimumWidth(108)
+        self._toolbar_layout.addWidget(self._fps_toggle_button)
+
+    def _ensure_custom_signin_widgets(self, parent):
+        if self._custom_signin_button is not None:
+            return
+        self._custom_signin_label = QLabel(parent)
+        self._custom_signin_label.setObjectName('customSigninLabel')
+        self._custom_signin_label.setAlignment(Qt.AlignCenter)
+        self._custom_signin_label.setStyleSheet(
+            'QLabel#customSigninLabel {'
+            'background:#fff8eb; color:#8a5a12; border:1px solid #f0d39b; border-radius:8px; padding:5px 8px; font-weight:600; }'
+        )
+        self._custom_signin_input = QLineEdit(parent)
+        self._custom_signin_input.setObjectName('customSigninInput')
+        self._custom_signin_input.setMinimumWidth(200)
+        self._custom_signin_input.setPlaceholderText('输入签到名称，例如：实验课签到')
+        self._custom_signin_button = QPushButton(parent)
+        self._custom_signin_button.setObjectName('customSigninButton')
+        self._custom_signin_button.setStyleSheet(
+            'QPushButton#customSigninButton {'
+            'background:#fff4db; color:#7c5310; border:1px solid #eccb8d; border-radius:8px; padding:6px 12px; font-weight:700; }'
+        )
+        self._custom_signin_button.clicked.connect(self._toggle_custom_signin)
+        self._custom_signin_button.setMinimumWidth(108)
+        self._toolbar_layout.addWidget(self._custom_signin_label)
+        self._toolbar_layout.addWidget(self._custom_signin_input, 1)
+        self._toolbar_layout.addWidget(self._custom_signin_button)
+        self._sync_custom_signin_controls()
 
     def _sync_fps_toggle_button(self):
         button = getattr(self, '_fps_toggle_button', None)
@@ -219,7 +311,7 @@ class MWindow():
         _app_service().state.realtime_mode = mode
         label = getattr(self, '_runtime_mode_label', None)
         if label is not None:
-            label.setText('识别策略：' + self._runtime_mode_text(mode))
+            label.setText('识别策略')
         self._refresh_runtime_mode_on_all_cameras()
         self.refresh_backend_mode_hint()
 
@@ -228,12 +320,42 @@ class MWindow():
         self._sync_fps_toggle_button()
         self._refresh_fps_overlay_on_all_cameras()
 
+    def _sync_custom_signin_controls(self):
+        if self._custom_signin_button is None or self._custom_signin_input is None or self._custom_signin_label is None:
+            return
+        state = _app_service().state
+        active_label = state.active_custom_attendance_label()
+        is_active = bool(active_label)
+        self._custom_signin_input.setEnabled(not is_active)
+        if is_active:
+            self._custom_signin_label.setText(f'自定义签到：进行中（{active_label}）')
+            self._custom_signin_button.setText('结束签到')
+        else:
+            self._custom_signin_label.setText('自定义签到：未开启')
+            self._custom_signin_button.setText('开始签到')
+
+    def _toggle_custom_signin(self):
+        state = _app_service().state
+        active_label = state.active_custom_attendance_label()
+        if active_label:
+            state.stop_custom_attendance()
+            self._sync_custom_signin_controls()
+            QMessageBox.about(self.mui, '签到结束', f'签到“{active_label}”已经结束！')
+            return
+        label = self._custom_signin_input.text().strip() if self._custom_signin_input is not None else ''
+        if not label:
+            QMessageBox.about(self.mui, '错误', '请先输入自定义签到名称。')
+            return
+        state.start_custom_attendance(label)
+        self._sync_custom_signin_controls()
+        QMessageBox.about(self.mui, '签到开始', f'签到“{label}”已经开始！')
+
     def _init_main_pending_hint(self):
         if hasattr(self.mui, 'mainPendingHint'):
             self._main_pending_label = self.mui.mainPendingHint
             self._main_pending_label.hide()
             return
-        parent = self.mui
+        parent = self.mui.groupBox if hasattr(self.mui, 'groupBox') else self.mui
         self._main_pending_label = QLabel(parent)
         self._main_pending_label.setObjectName('mainPendingHint')
         self._main_pending_label.setText('模型待更新：请进入“录入人脸及管理”，点击“更新模型”。')
@@ -243,13 +365,13 @@ class MWindow():
             'QLabel#mainPendingHint {'
             'background:#fff5f5; color:#a61b1b; border:1px solid #f2b8b8; border-radius:8px; padding:6px 10px; font-weight:600; }'
         )
-        self._main_pending_label.setGeometry(420, 850, 1440, 26)
+        self._main_pending_label.setGeometry(15, 24, max(320, parent.width() - 30), 28)
         self._main_pending_label.hide()
 
     def _init_backend_mode_hint(self):
         if hasattr(self.mui, 'mainBackendHint'):
             self._backend_mode_label = self.mui.mainBackendHint
-            print('backend hint widget loaded from ui:', self._backend_mode_label is not None)
+            self._backend_mode_label.setMinimumWidth(150)
             self._backend_mode_label.show()
             return
         parent = self.mui.groupBox if hasattr(self.mui, 'groupBox') else self.mui
@@ -260,20 +382,14 @@ class MWindow():
             'QLabel#mainBackendHint {'
             'background:#eef4ff; color:#1f3f7a; border:1px solid #c9dafc; border-radius:8px; padding:6px 10px; font-weight:600; }'
         )
-        if parent is self.mui:
-            self._backend_mode_label.setGeometry(420, 820, 480, 26)
-        else:
-            self._backend_mode_label.setGeometry(18, 24, max(260, parent.width() - 36), 24)
         self._backend_mode_label.show()
-        self._backend_mode_label.raise_()
 
     def refresh_backend_mode_hint(self):
         if self._backend_mode_label is None:
             return
-        if self._backend_mode_label.parent() is self.mui.groupBox and self._backend_mode_label.objectName() != 'mainBackendHint':
-            self._backend_mode_label.setGeometry(18, 24, max(260, self.mui.groupBox.width() - 36), 24)
         mode = _app_service().pipeline.current_backend_mode()
-        provider_text = _app_service().pipeline.current_provider_text()
+        provider_display = _app_service().pipeline.current_provider_display_text()
+        provider_tooltip = _app_service().pipeline.current_provider_tooltip()
         mode_map = {
             'deep': '深度模型',
             'lbph': 'LBPH（降级）',
@@ -282,13 +398,17 @@ class MWindow():
             'unknown': '未知',
         }
         text = mode_map.get(mode, str(mode))
-        strategy_text = self._runtime_mode_text(_app_service().state.realtime_mode)
-        if mode == 'deep':
-            self._backend_mode_label.setText(f'当前识别后端：{text} [{provider_text}] | 策略：{strategy_text}')
-        else:
-            self._backend_mode_label.setText(f'当前识别后端：{text} | 策略：{strategy_text}')
+        self._backend_mode_label.setText(f'识别后端：{text}')
+        provider_label = getattr(self, '_provider_label', None)
+        if provider_label is not None:
+            provider_label.setText(provider_display)
+            provider_label.setToolTip(provider_tooltip)
+            provider_label.show()
         self._backend_mode_label.show()
-        self._backend_mode_label.raise_()
+
+    def _refresh_operation_toolbar_geometry(self):
+        if hasattr(self.mui, 'groupBox') and self.mui.groupBox is not None:
+            self.mui.groupBox.updateGeometry()
 
     def refresh_model_pending_hint(self):
         if self._main_pending_label is None:
@@ -458,6 +578,7 @@ class MWindow():
         if camera.cap.isOpened():
             setattr(self, runtime.busy_attr, True)
             self.cameraList.append(url)
+            self.refresh_backend_mode_hint()
             return True
         return False
 
@@ -543,6 +664,7 @@ class MWindow():
             return
         if cam_obj.url == 0 and self._get_system_lock() == int(slot):
             self._set_system_lock(0)
+        self.refresh_backend_mode_hint()
         self._msg_bridge.show_message.emit(
             '摄像头已断开',
             f'窗口{slot}的视频流读取失败，系统已自动释放该摄像头。',

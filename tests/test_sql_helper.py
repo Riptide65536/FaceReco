@@ -1,4 +1,5 @@
 import datetime as dt
+import threading
 
 from data.sql_helper import SqlF
 
@@ -153,5 +154,59 @@ def test_export_attendance_report_csv(tmp_path):
     assert "姓名,地点,时间,情绪,考勤类型,状态" in text
     assert "linhao,gate-a,2026-05-26 08:40:00,高兴,上班打卡,正常" in text
     assert "linhao,gate-a,2026-05-26 18:15:00,中性,下班打卡,正常" in text
+
+    sql.dbclose()
+
+
+def test_sqlite_shared_repository_is_safe_across_threads(tmp_path):
+    db_path = tmp_path / "thread_safe.db"
+    sql = SqlF(backend="sqlite", sqlite_path=str(db_path))
+    failures: list[str] = []
+    ready = threading.Barrier(2)
+
+    def _writer():
+        try:
+            ready.wait(timeout=2.0)
+            for idx in range(12):
+                ok = sql.saveNameTimePic(
+                    "linhao",
+                    "gate-a",
+                    dt.datetime(2026, 5, 27, 8, 30, min(idx, 59)),
+                    emotion="涓€?",
+                )
+                if not ok:
+                    failures.append(f"writer-save-{idx}")
+        except Exception as exc:
+            failures.append(f"writer:{exc}")
+
+    def _reader():
+        try:
+            ready.wait(timeout=2.0)
+            for _ in range(12):
+                _ = sql.getAllname()
+                _ = sql.query_logs_with_emotion(
+                    name="linhao",
+                    location="gate-a",
+                    start_time=dt.datetime(2026, 5, 27, 0, 0),
+                    end_time=dt.datetime(2026, 5, 27, 23, 59),
+                )
+        except Exception as exc:
+            failures.append(f"reader:{exc}")
+
+    writer = threading.Thread(target=_writer)
+    reader = threading.Thread(target=_reader)
+    writer.start()
+    reader.start()
+    writer.join(timeout=5.0)
+    reader.join(timeout=5.0)
+
+    assert failures == []
+    rows = sql.query_logs_with_emotion(
+        name="linhao",
+        location="gate-a",
+        start_time=dt.datetime(2026, 5, 27, 0, 0),
+        end_time=dt.datetime(2026, 5, 27, 23, 59),
+    )
+    assert len(rows) == 12
 
     sql.dbclose()

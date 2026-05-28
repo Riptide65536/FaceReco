@@ -121,7 +121,7 @@ class Camera:
         self._emotion_cache: dict[str, dict[str, object]] = {}
         self._emotion_cache_ttl = max(0.5, float(os.getenv("FACE_RECO_EMOTION_TTL", "2.0")))
         self._emotion_min_gap_s = max(0.0, float(os.getenv("FACE_RECO_EMOTION_MIN_GAP", "0.35")))
-        self._emotion_default_label = os.getenv("FACE_RECO_EMOTION_DEFAULT", "neutral").strip() or "neutral"
+        self._emotion_default_label = os.getenv("FACE_RECO_EMOTION_DEFAULT", "中性").strip() or "中性"
         self._recognition_interval = max(1, int(os.getenv("FACE_RECO_RECOGNIZE_INTERVAL", "2")))
         self._recognition_min_gap_s = max(0.0, float(os.getenv("FACE_RECO_RECOGNIZE_MIN_GAP", "0.18")))
         self._recognition_force_refresh_s = max(
@@ -512,7 +512,8 @@ class Camera:
             return False
         if name == "unknown":
             return False
-        if self._emotion_future is not None and (not self._emotion_future.done()):
+        emotion_future = getattr(self, "_emotion_future", None)
+        if emotion_future is not None and (not emotion_future.done()):
             return False
         if (now_ts - self._last_emotion_predict_ts) < self._emotion_min_gap_s:
             return False
@@ -522,10 +523,11 @@ class Camera:
         return True
 
     def _collect_emotion_result(self) -> None:
-        if self._emotion_future is None or (not self._emotion_future.done()):
+        emotion_future = getattr(self, "_emotion_future", None)
+        if emotion_future is None or (not emotion_future.done()):
             return
         try:
-            name, emotion_text, predicted_ts = self._emotion_future.result()
+            name, emotion_text, predicted_ts = emotion_future.result()
             if name:
                 self._emotion_cache[name] = {"emotion": emotion_text, "ts": float(predicted_ts)}
                 self._last_emotion_predict_ts = float(predicted_ts)
@@ -538,7 +540,8 @@ class Camera:
     def _submit_emotion_task(self, name: str, face_gray: np.ndarray, now_ts: float) -> None:
         if self.emotion is None:
             return
-        if self._emotion_future is not None and (not self._emotion_future.done()):
+        emotion_future = getattr(self, "_emotion_future", None)
+        if emotion_future is not None and (not emotion_future.done()):
             return
         face_copy = np.ascontiguousarray(face_gray.copy())
 
@@ -551,6 +554,61 @@ class Camera:
 
         self._emotion_future_name = name
         self._emotion_future = self._emotion_pool.submit(_job)
+
+    @staticmethod
+    def _core_attendance_types() -> set[str]:
+        return {"上班打卡", "下班打卡", "外出登记"}
+
+    def _save_detected_recognition_event(self, sql_repo, name: str, emotion_text: str, now_datetime: datetime.datetime) -> bool:
+        if not name or name == "unknown":
+            return False
+        state = getattr(self._app_service, "state", None)
+        custom_label = state.active_custom_attendance_label() if state is not None else ""
+        if not custom_label:
+            return bool(
+                sql_repo.save_recognition_event(
+                    name=name,
+                    location=self.nameAndLocation,
+                    timepoint=now_datetime,
+                    emotion=emotion_text,
+                )
+            )
+        if not state.try_mark_custom_attendance_recorded(name):
+            return False
+
+        daily_types = set(sql_repo.get_daily_attendance_types(name, now_datetime))
+        has_core_attendance = bool(daily_types & self._core_attendance_types())
+        if not has_core_attendance:
+            sql_repo.save_recognition_event(
+                name=name,
+                location=self.nameAndLocation,
+                timepoint=now_datetime,
+                emotion=emotion_text,
+            )
+
+        saved_custom = bool(
+            sql_repo.save_recognition_event(
+                name=name,
+                location=self.nameAndLocation,
+                timepoint=now_datetime,
+                emotion=emotion_text,
+                attendance_type=custom_label,
+            )
+        )
+        if not saved_custom:
+            state.unmark_custom_attendance_recorded(name)
+        return saved_custom
+
+    @staticmethod
+    def _shutdown_executor(executor) -> None:
+        if executor is None:
+            return
+        try:
+            executor.shutdown(wait=False, cancel_futures=True)
+        except TypeError:
+            executor.shutdown(wait=False)
+        except Exception:
+            pass
 
     @staticmethod
     def _resize_for_analysis(frame_bgr: np.ndarray, target_width: int) -> np.ndarray:
@@ -1148,12 +1206,7 @@ class Camera:
                 if count >= face_max_num:
                     now_datetime = str(datetime.datetime.now()).split(".")[0]
                     now_datetime = datetime.datetime.strptime(now_datetime, "%Y-%m-%d %H:%M:%S")
-                    sql_repo.save_recognition_event(
-                        name=name,
-                        location=self.nameAndLocation,
-                        timepoint=now_datetime,
-                        emotion=emotion_text,
-                    )
+                    self._save_detected_recognition_event(sql_repo, name, emotion_text, now_datetime)
                     face_count_dic[(name, emotion_text)] = 0
             temp_face_list = face_list
             face_list = []
@@ -1228,7 +1281,7 @@ class Camera:
         for frame in self._iter_frames():
             rawframe = cv2.resize(frame, (640, 360))
             faces = self.detector.detectMultiScale(rawframe, 1.3, 5)
-            text_items = [("浜鸿劯褰曞叆棰勮", (7, 20), (0, 0, 255), 0.6, 2)]
+            text_items = [("人脸录入预览", (7, 20), (0, 0, 255), 0.6, 2)]
             for (x, y, w, h) in faces:
                 cv2.rectangle(rawframe, (x, y), (x + w, y + h), (0, 0, 255), thickness=2)
             self._append_fps_overlay(rawframe, text_items)
@@ -1246,21 +1299,13 @@ class Camera:
             future.cancel()
         self._predict_future = None
         predict_pool = getattr(self, "_predict_pool", None)
-        if predict_pool is not None:
-            try:
-                predict_pool.shutdown(wait=False, cancel_futures=True)
-            except Exception:
-                pass
+        self._shutdown_executor(predict_pool)
         emotion_future = getattr(self, "_emotion_future", None)
         if emotion_future is not None and (not emotion_future.done()):
             emotion_future.cancel()
         self._emotion_future = None
         emotion_pool = getattr(self, "_emotion_pool", None)
-        if emotion_pool is not None:
-            try:
-                emotion_pool.shutdown(wait=False, cancel_futures=True)
-            except Exception:
-                pass
+        self._shutdown_executor(emotion_pool)
         if self.url == 0 and release_system_lock:
             self._app_service.state.system_lock_slot = 0
         if self.cap is not None:

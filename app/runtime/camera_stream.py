@@ -75,7 +75,7 @@ class Camera:
         self._app_service = app_service
         self.nameAndLocation = "Test Video, No Location"
         self.displayMode = 0
-        self.url = url
+        self.url = self._normalize_video_source(url)
         self.outLabel = outLabel
         self._on_stream_end = on_stream_end
         self._prefer_haar_detector = bool(prefer_haar_detector)
@@ -162,6 +162,15 @@ class Camera:
         except Exception as exc:
             _warn_once("emotion_backend_unavailable", "鎯呯华璇嗗埆鏈嶅姟涓嶅彲鐢紝宸查檷绾т负涓€э細", exc)
         self._apply_runtime_mode(getattr(self._app_service.state, "realtime_mode", "balanced"))
+
+    @staticmethod
+    def _normalize_video_source(url):
+        if isinstance(url, str):
+            normalized = url.strip()
+            if normalized.isdigit():
+                return int(normalized)
+            return normalized
+        return url
 
     @staticmethod
     def _sleep_frame_interval():
@@ -433,7 +442,7 @@ class Camera:
         return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
 
     def _submit_prediction_task(self, analysis_frame: np.ndarray, src_size: tuple[int, int], dst_size: tuple[int, int], frame_signature: str):
-        if self.face_service is None:
+        if self.face_service is None or (not getattr(self, "_running", True)):
             return None
         labels = dict(self._app_service.state.user_dic)
 
@@ -452,7 +461,12 @@ class Camera:
                 ]
             return preds, frame_signature
 
-        return self._predict_pool.submit(_job)
+        try:
+            if self._predict_pool is None:
+                return None
+            return self._predict_pool.submit(_job)
+        except RuntimeError:
+            return None
 
     def _submit_detection_task(
         self,
@@ -461,6 +475,8 @@ class Camera:
         dst_size: tuple[int, int],
         frame_signature: str,
     ):
+        if not getattr(self, "_running", True):
+            return None
         def _job():
             if self.face_service is not None:
                 boxes = self.face_service.detect_faces(analysis_frame)
@@ -491,7 +507,12 @@ class Camera:
                 ]
             return predictions, frame_signature
 
-        return self._predict_pool.submit(_job)
+        try:
+            if self._predict_pool is None:
+                return None
+            return self._predict_pool.submit(_job)
+        except RuntimeError:
+            return None
 
     def _should_run_full_recognition(self, now_ts: float) -> bool:
         elapsed = now_ts - self._last_recognition_ts
@@ -538,7 +559,7 @@ class Camera:
             self._emotion_future_name = ""
 
     def _submit_emotion_task(self, name: str, face_gray: np.ndarray, now_ts: float) -> None:
-        if self.emotion is None:
+        if self.emotion is None or (not getattr(self, "_running", True)):
             return
         emotion_future = getattr(self, "_emotion_future", None)
         if emotion_future is not None and (not emotion_future.done()):
@@ -553,7 +574,12 @@ class Camera:
             return name, emotion_text, now_ts
 
         self._emotion_future_name = name
-        self._emotion_future = self._emotion_pool.submit(_job)
+        try:
+            if self._emotion_pool is None:
+                return
+            self._emotion_future = self._emotion_pool.submit(_job)
+        except RuntimeError:
+            self._emotion_future = None
 
     @staticmethod
     def _core_attendance_types() -> set[str]:
@@ -1111,22 +1137,25 @@ class Camera:
                 src_h, src_w = analysis_frame.shape[:2]
                 dst_h, dst_w = rawframe.shape[:2]
                 if self._should_run_full_recognition(now_ts):
-                    self._predict_future = self._submit_prediction_task(
+                    future = self._submit_prediction_task(
                         analysis_frame.copy(),
                         (src_w, src_h),
                         (dst_w, dst_h),
                         frame_signature,
                     )
-                    self._predict_task_kind = "recognize"
+                    self._predict_future = future
+                    self._predict_task_kind = "recognize" if future is not None else ""
                 else:
-                    self._predict_future = self._submit_detection_task(
+                    future = self._submit_detection_task(
                         analysis_frame.copy(),
                         (src_w, src_h),
                         (dst_w, dst_h),
                         frame_signature,
                     )
-                    self._predict_task_kind = "detect"
-                self._last_analysis_gray_small = analysis_gray.copy()
+                    self._predict_future = future
+                    self._predict_task_kind = "detect" if future is not None else ""
+                if future is not None:
+                    self._last_analysis_gray_small = analysis_gray.copy()
 
             predictions = self._last_predictions
             text_items: list[tuple[str, tuple[int, int], tuple[int, int, int], float, int]] = []
@@ -1244,14 +1273,16 @@ class Camera:
             if should_detect and self._predict_future is None:
                 src_h, src_w = analysis_frame.shape[:2]
                 dst_h, dst_w = rawframe.shape[:2]
-                self._predict_future = self._submit_detection_task(
+                future = self._submit_detection_task(
                     analysis_frame.copy(),
                     (src_w, src_h),
                     (dst_w, dst_h),
                     frame_signature,
                 )
-                self._predict_task_kind = "detect"
-                self._last_analysis_gray_small = analysis_gray.copy()
+                self._predict_future = future
+                self._predict_task_kind = "detect" if future is not None else ""
+                if future is not None:
+                    self._last_analysis_gray_small = analysis_gray.copy()
 
             text_items = [(self.nameAndLocation, (7, 20), (0, 0, 255), 0.6, 2)]
             for pred in self._last_predictions:
@@ -1300,12 +1331,14 @@ class Camera:
         self._predict_future = None
         predict_pool = getattr(self, "_predict_pool", None)
         self._shutdown_executor(predict_pool)
+        self._predict_pool = None
         emotion_future = getattr(self, "_emotion_future", None)
         if emotion_future is not None and (not emotion_future.done()):
             emotion_future.cancel()
         self._emotion_future = None
         emotion_pool = getattr(self, "_emotion_pool", None)
         self._shutdown_executor(emotion_pool)
+        self._emotion_pool = None
         if self.url == 0 and release_system_lock:
             self._app_service.state.system_lock_slot = 0
         if self.cap is not None:

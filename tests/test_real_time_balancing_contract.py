@@ -348,6 +348,37 @@ def test_camera_runtime_mode_supports_unlimited_realtime_fps(monkeypatch):
     assert camera._emit_min_gap_s == 0.0
 
 
+def test_monitor_window_parse_source_input_and_extract_combo_value():
+    try:
+        from app.ui.monitor_windows import MWindow
+    except ModuleNotFoundError:
+        pytest.skip("PySide2 is not available in this test environment")
+
+    class _FakeCombo:
+        def __init__(self):
+            self._text = "Integrated Camera (摄像头 0)"
+            self._index = 0
+
+        def currentText(self):
+            return self._text
+
+        def currentIndex(self):
+            return self._index
+
+        def itemData(self, idx):
+            return "0" if idx == 0 else None
+
+        def itemText(self, idx):
+            return "Integrated Camera (摄像头 0)" if idx == 0 else ""
+
+    combo = _FakeCombo()
+
+    assert MWindow._extract_source_combo_value(combo) == "0"
+    assert MWindow._parse_source_input(0) == 0
+    assert MWindow._parse_source_input("0") == 0
+    assert MWindow._parse_source_input("demo.mp4") == "demo.mp4"
+
+
 def test_camera_custom_attendance_saves_regular_then_custom_once():
     try:
         from app.runtime.camera_stream import Camera

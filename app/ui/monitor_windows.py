@@ -11,10 +11,15 @@ from PySide2.QtWidgets import (
     QLineEdit,
     QWidget,
     QHBoxLayout,
+    QVBoxLayout,
 )
 from PySide2.QtUiTools import QUiLoader
 from PySide2.QtGui import QPixmap
-from PySide2.QtCore import Qt, QObject, Signal
+from PySide2.QtCore import Qt, QObject, Signal, QTimer
+try:
+    from PySide2.QtMultimedia import QCameraInfo
+except Exception:  # pragma: no cover - depends on local Qt multimedia plugin
+    QCameraInfo = None
 import cv2, threading, os, shutil, re, time
 import ast
 from paths import asset_path, ui_path
@@ -95,6 +100,7 @@ class MWindow():
         self.mui.luruButton.clicked.connect(self.luru)
         self.mui.logButton.clicked.connect(self.log)
         self.mui.pushButtonSaveConfig.clicked.connect(self.saveconfig)
+        self.mui.pushButtonApplyConfig.clicked.connect(self.applyconfig)
         self.ui_controller = MainUIController(self)
         self._main_pending_label = None
         self._backend_mode_label = None
@@ -104,9 +110,12 @@ class MWindow():
         self._runtime_mode_label = None
         self._runtime_mode_combo = None
         self._fps_toggle_button = None
+        self._custom_signin_widget = None
+        self._custom_signin_layout = None
         self._custom_signin_label = None
         self._custom_signin_input = None
         self._custom_signin_button = None
+        self._applyconfig_pending_snapshots = None
         self._pending_notice_shown = False
         self._operation_group_title_base = self.mui.groupBox.title() if hasattr(self.mui, 'groupBox') else '操作区'
         self._luru_button_base_text = self.mui.luruButton.text()
@@ -114,6 +123,7 @@ class MWindow():
 
         self.busy1, self.busy2, self.busy3, self.busy4 = False, False, False, False
         self.cameraList = [] # 记录已经获取的摄像头 避免同一个摄像头重复获取
+        self._camera_source_items = []
 
         ######### ↓↓↓以下代码为人脸识别数据初始化过程 ########
         app_service = _app_service()
@@ -125,8 +135,8 @@ class MWindow():
         ######### ↑↑↑以上代码为人脸识别数据初始化过程 ########
 
         ######### ↓↓↓以下代码为显示初始化过程 ########
-        if not self._initialize_display_configs():
-            return
+        self._populate_camera_source_inputs()
+        self._initialize_display_configs()
 
         ######### ↑↑↑以上代码为显示初始化过程 ########
         self._expand_main_window_for_toolbar()
@@ -140,7 +150,11 @@ class MWindow():
 
     def _expand_main_window_for_toolbar(self):
         if hasattr(self.mui, 'groupBox'):
-            self.mui.groupBox.setMinimumHeight(156)
+            self.mui.groupBox.setMinimumHeight(206)
+        if hasattr(self.mui, 'operationToolbarHost') and self.mui.operationToolbarHost is not None:
+            self.mui.operationToolbarHost.setMinimumHeight(40)
+        if hasattr(self.mui, 'operationButtonRow') and self.mui.operationButtonRow is not None:
+            self.mui.operationButtonRow.setMinimumHeight(42)
 
     def _refresh_runtime_mode_on_all_cameras(self):
         mode = _app_service().state.realtime_mode
@@ -200,7 +214,7 @@ class MWindow():
             self._toolbar_layout.addWidget(self._backend_mode_label)
         if self._provider_label is not None and self._toolbar_layout.indexOf(self._provider_label) < 0:
             self._toolbar_layout.addWidget(self._provider_label, 1)
-        self._ensure_custom_signin_widgets(parent)
+        self._ensure_custom_signin_widgets()
         self._toolbar_layout.addStretch(1)
 
     def _ensure_operation_toolbar(self):
@@ -238,6 +252,27 @@ class MWindow():
         )
         self._toolbar_widget.show()
 
+    def _ensure_custom_signin_row(self):
+        if self._custom_signin_widget is not None and self._custom_signin_layout is not None:
+            return
+        group_box = self.mui.groupBox if hasattr(self.mui, 'groupBox') else self.mui
+        group_layout = group_box.layout() if hasattr(group_box, 'layout') else None
+        parent = group_box if group_box is not None else self.mui
+        self._custom_signin_widget = QWidget(parent)
+        self._custom_signin_widget.setObjectName('customSigninHost')
+        self._custom_signin_widget.setMinimumHeight(40)
+        self._custom_signin_layout = QHBoxLayout(self._custom_signin_widget)
+        self._custom_signin_layout.setContentsMargins(0, 0, 0, 0)
+        self._custom_signin_layout.setSpacing(10)
+        if group_layout is not None:
+            button_row = getattr(self.mui, 'operationButtonRow', None)
+            insert_index = group_layout.indexOf(button_row) if button_row is not None else -1
+            if insert_index >= 0:
+                group_layout.insertWidget(insert_index, self._custom_signin_widget)
+            else:
+                group_layout.addWidget(self._custom_signin_widget)
+        self._custom_signin_widget.show()
+
     def _ensure_fps_toggle_widget(self, parent):
         if hasattr(self, '_fps_toggle_button') and self._fps_toggle_button is not None:
             return
@@ -257,9 +292,11 @@ class MWindow():
         self._fps_toggle_button.setMinimumWidth(108)
         self._toolbar_layout.addWidget(self._fps_toggle_button)
 
-    def _ensure_custom_signin_widgets(self, parent):
+    def _ensure_custom_signin_widgets(self):
         if self._custom_signin_button is not None:
             return
+        self._ensure_custom_signin_row()
+        parent = self._custom_signin_widget
         self._custom_signin_label = QLabel(parent)
         self._custom_signin_label.setObjectName('customSigninLabel')
         self._custom_signin_label.setAlignment(Qt.AlignCenter)
@@ -267,6 +304,7 @@ class MWindow():
             'QLabel#customSigninLabel {'
             'background:#fff8eb; color:#8a5a12; border:1px solid #f0d39b; border-radius:8px; padding:5px 8px; font-weight:600; }'
         )
+        self._custom_signin_label.setMinimumWidth(132)
         self._custom_signin_input = QLineEdit(parent)
         self._custom_signin_input.setObjectName('customSigninInput')
         self._custom_signin_input.setMinimumWidth(200)
@@ -279,9 +317,9 @@ class MWindow():
         )
         self._custom_signin_button.clicked.connect(self._toggle_custom_signin)
         self._custom_signin_button.setMinimumWidth(108)
-        self._toolbar_layout.addWidget(self._custom_signin_label)
-        self._toolbar_layout.addWidget(self._custom_signin_input, 1)
-        self._toolbar_layout.addWidget(self._custom_signin_button)
+        self._custom_signin_layout.addWidget(self._custom_signin_label)
+        self._custom_signin_layout.addWidget(self._custom_signin_input, 1)
+        self._custom_signin_layout.addWidget(self._custom_signin_button)
         self._sync_custom_signin_controls()
 
     def _sync_fps_toggle_button(self):
@@ -447,11 +485,206 @@ class MWindow():
             )
 
     def _initialize_display_configs(self):
+        failed_slots = []
         for slot in (1, 2, 3, 4):
             config_lines = _app_service().config_repo.load_camera_slot(slot)
             if not self._apply_slot_config(slot, config_lines):
-                return False
+                failed_slots.append(str(slot))
+        if failed_slots:
+            QTimer.singleShot(
+                0,
+                lambda: QMessageBox.about(
+                    self.mui,
+                    '部分视频源加载失败',
+                    f'以下窗口未能按上次配置启动：{", ".join(failed_slots)}。\n'
+                    '界面其余功能仍可正常使用，请检查对应视频源后重新应用配置。',
+                ),
+            )
         return True
+
+    @staticmethod
+    def _camera_source_combo_name(slot):
+        return f'sourceComboBox{int(slot)}'
+
+    def _populate_camera_source_inputs(self):
+        self._camera_source_items = self._discover_camera_sources()
+        for slot in (1, 2, 3, 4):
+            combo = getattr(self.mui, self._camera_source_combo_name(slot), None)
+            if combo is None:
+                continue
+            self._configure_source_combo(combo, self._camera_source_items, select_first_camera=False)
+
+    def _configure_source_combo(self, combo, items, *, select_first_camera):
+        current_text = combo.currentText().strip()
+        combo.clear()
+        combo.addItem('选择本机摄像头，或输入视频文件 / 流地址', '')
+        for item in items:
+            combo.addItem(item['label'], item['value'])
+        combo.setEditable(True)
+        combo.setInsertPolicy(QComboBox.NoInsert)
+        combo.setMinimumHeight(34)
+        combo.setMinimumContentsLength(24)
+        combo.setMaxVisibleItems(max(5, len(items) + 1))
+        combo.setSizeAdjustPolicy(QComboBox.AdjustToContentsOnFirstShow)
+        combo.setMinimumWidth(220)
+        combo.setToolTip('可直接选择本机摄像头，或手动输入视频文件路径 / 流地址 / 摄像头编号。')
+        line_edit = combo.lineEdit()
+        if line_edit is not None:
+            line_edit.setPlaceholderText('选择摄像头，或输入视频文件 / 流地址 / 编号')
+        view = combo.view()
+        if view is not None:
+            try:
+                view.setMinimumWidth(420)
+            except Exception:
+                pass
+        if current_text:
+            restored_index = combo.findText(current_text, Qt.MatchExactly)
+            if restored_index >= 0:
+                combo.setCurrentIndex(restored_index)
+            else:
+                combo.setEditText(current_text)
+        elif select_first_camera and combo.count() > 1:
+            combo.setCurrentIndex(1)
+        else:
+            combo.setCurrentIndex(0)
+
+    @staticmethod
+    def _discover_camera_sources():
+        items = []
+        seen_values = set()
+        try:
+            if QCameraInfo is None:
+                raise RuntimeError('QCameraInfo unavailable')
+            for index, camera_info in enumerate(QCameraInfo.availableCameras()):
+                description = str(camera_info.description() or '').strip() or f'摄像头 {index}'
+                value = str(index)
+                if value in seen_values:
+                    continue
+                seen_values.add(value)
+                items.append({'label': f'{description} (摄像头 {index})', 'value': value})
+        except Exception:
+            pass
+        if not items:
+            for index in range(4):
+                cap = None
+                try:
+                    cap = cv2.VideoCapture(index)
+                    if cap is not None and cap.isOpened():
+                        value = str(index)
+                        if value not in seen_values:
+                            seen_values.add(value)
+                            items.append({'label': f'摄像头 {index}', 'value': value})
+                except Exception:
+                    pass
+                finally:
+                    if cap is not None:
+                        try:
+                            cap.release()
+                        except Exception:
+                            pass
+        if not items:
+            items.append({'label': '集成摄像头 (摄像头 0)', 'value': '0'})
+        return items
+
+    @staticmethod
+    def _source_value_to_text(source):
+        if source is None:
+            return ''
+        return str(source)
+
+    @staticmethod
+    def _parse_source_input(raw_value):
+        if raw_value is None:
+            return ''
+        if isinstance(raw_value, int):
+            return raw_value
+        value = str(raw_value).strip()
+        if value == '':
+            return ''
+        if value.isdigit():
+            return int(value)
+        return value
+
+    def _slot_config_values(self, slot):
+        name_text = getattr(self.mui, f'lineEdit{slot}1').text().strip()
+        display_mode = getattr(self.mui, f'comboBox{slot}').currentIndex()
+        source_combo = getattr(self.mui, self._camera_source_combo_name(slot), None)
+        source_text = ''
+        if source_combo is not None:
+            source_text = self._extract_source_combo_value(source_combo)
+        return name_text, display_mode, source_text
+
+    @staticmethod
+    def _extract_source_combo_value(combo):
+        text = ''
+        try:
+            line_edit_getter = getattr(combo, 'lineEdit', None)
+            line_edit = line_edit_getter() if callable(line_edit_getter) else None
+            if line_edit is not None:
+                text = line_edit.text().strip()
+        except Exception:
+            text = ''
+        if text == '':
+            text = combo.currentText().strip()
+        combo_count = 0
+        try:
+            combo_count = int(combo.count())
+        except Exception:
+            combo_count = 0
+        idx = -1
+        try:
+            idx = int(combo.currentIndex())
+        except Exception:
+            idx = -1
+        if text == '' and idx >= 0:
+            try:
+                data = combo.itemData(idx)
+            except Exception:
+                data = None
+            if data not in (None, ''):
+                return str(data)
+            try:
+                text = combo.itemText(idx).strip()
+            except Exception:
+                text = ''
+        if text == '':
+            return ''
+        placeholder_text = combo.itemText(0).strip() if combo_count > 0 else ''
+        if text == placeholder_text:
+            if idx > 0:
+                try:
+                    data = combo.itemData(idx)
+                except Exception:
+                    data = None
+                if data not in (None, ''):
+                    return str(data)
+            return ''
+        if combo_count > 0:
+            match_index = -1
+            try:
+                match_index = combo.findText(text, Qt.MatchExactly)
+            except Exception:
+                match_index = -1
+            if match_index < 0:
+                for option_index in range(combo_count):
+                    try:
+                        if combo.itemText(option_index).strip() == text:
+                            match_index = option_index
+                            break
+                    except Exception:
+                        continue
+            if match_index >= 0:
+                try:
+                    matched_data = combo.itemData(match_index)
+                except Exception:
+                    matched_data = None
+                if matched_data not in (None, ''):
+                    return str(matched_data)
+        if idx >= 0:
+            data = combo.itemData(idx)
+            if data not in (None, '') and text == combo.itemText(idx):
+                return str(data)
+        return text
 
     def _apply_slot_config(self, slot, config_lines):
         if not config_lines:
@@ -469,32 +702,64 @@ class MWindow():
 
         line_name = getattr(self.mui, f'lineEdit{slot}1')
         combo_display = getattr(self.mui, f'comboBox{slot}')
-        line_url = getattr(self.mui, f'lineEdit{slot}2')
+        source_combo = getattr(self.mui, self._camera_source_combo_name(slot), None)
         line_name.setText(nameandplace)
         combo_display.setCurrentIndex(displaymode)
-        line_url.setText(str(url))
+        if source_combo is not None:
+            source_combo.setCurrentText(self._source_value_to_text(url))
 
         if url == '':
             return True
         return self.start_slot(slot, url, nameandplace, displaymode)
 
     def _on_close_event(self, event):
-        self._closing = True
         try:
-            self.close()
+            self.close(mark_app_closing=True)
         finally:
             event.accept()
 
     def saveconfig(self):  # 保存显示配置文件的函数
         for slot in (1, 2, 3, 4):
+            name_text, display_mode, source_text = self._slot_config_values(slot)
             _app_service().config_repo.save_camera_slot(
                 slot,
-                getattr(self.mui, f'lineEdit{slot}1').text(),
-                getattr(self.mui, f'comboBox{slot}').currentIndex(),
-                getattr(self.mui, f'lineEdit{slot}2').text(),
+                name_text,
+                display_mode,
+                source_text,
             )
 
         QMessageBox.about(self.mui, '保存成功', '下次启动时会采用此次配置')
+
+    def applyconfig(self):
+        snapshots = []
+        for slot in (1, 2, 3, 4):
+            name_text, display_mode, source_text = self._slot_config_values(slot)
+            snapshots.append((slot, self._parse_source_input(source_text), name_text, display_mode))
+
+        self._applyconfig_pending_snapshots = snapshots
+        for slot in (1, 2, 3, 4):
+            self.close_slot(slot, show_message_when_idle=False)
+        QApplication.processEvents()
+        QTimer.singleShot(180, self._restart_after_applyconfig)
+
+    def _restart_after_applyconfig(self):
+        snapshots = self._applyconfig_pending_snapshots or []
+        self._applyconfig_pending_snapshots = None
+        failed_slots = []
+        for slot, source, name_text, display_mode in snapshots:
+            if source == '':
+                continue
+            started = self.start_slot(slot, source, name_text, display_mode, allow_duplicate_source=True)
+            if not started:
+                failed_slots.append(str(slot))
+        if failed_slots:
+            QMessageBox.about(
+                self.mui,
+                '部分应用失败',
+                f'以下窗口应用失败：{", ".join(failed_slots)}。\n请检查视频源是否可用或是否被占用。',
+            )
+            return
+        QMessageBox.about(self.mui, '应用完成', '当前配置已立即应用。')
 
     def delcam(self):
         if _DEBUG_VERBOSE:
@@ -548,6 +813,10 @@ class MWindow():
         _app_service().state.system_lock_slot = int(slot)
 
     def start_slot(self, slot, url, cameraNamePlace='', displaymode=0, allow_duplicate_source=False):
+        url = self._parse_source_input(url)
+        if url == '':
+            QMessageBox.about(self.mui, '错误', '请选择摄像头，或输入有效的视频文件路径 / 流地址。')
+            return False
         runtime = self.ui_controller.get_slot_runtime(int(slot))
         if getattr(self, runtime.busy_attr, False):
             QMessageBox.about(self.mui, '错误', f'窗口{slot}忙碌，不可以添加视频流')
@@ -580,10 +849,18 @@ class MWindow():
             self.cameraList.append(url)
             self.refresh_backend_mode_hint()
             return True
+        if url == 0 and self._get_system_lock() == int(slot):
+            self._set_system_lock(0)
+        try:
+            camera.close(release_system_lock=False)
+        except Exception:
+            pass
+        setattr(self, runtime.camera_attr, None)
         return False
 
-    def close(self):
-        self._closing = True
+    def close(self, mark_app_closing=False):
+        if mark_app_closing:
+            self._closing = True
         for slot in (1, 2, 3, 4):
             self.close_slot(slot, show_message_when_idle=False)
 
@@ -607,6 +884,7 @@ class MWindow():
                 if cam.url in self.cameraList:
                     self.cameraList.remove(cam.url)
                 cam.close()
+            setattr(self, runtime.camera_attr, None)
             label = getattr(self.mui, runtime.label_name, None)
             if label is not None:
                 label.setPixmap(QPixmap(asset_path('nosignal.png')))
@@ -678,24 +956,46 @@ class AddWindow():
         self.ui.setFont(_default_ui_font())
         self.ui.setStyleSheet(_app_stylesheet())
         self.ui.setFixedSize(self.ui.width(), self.ui.height())
+        try:
+            self.ui.buttonBox.accepted.disconnect()
+        except Exception:
+            pass
+        try:
+            self.ui.buttonBox.rejected.disconnect()
+        except Exception:
+            pass
         self.ui.buttonBox.accepted.connect(self.ok)
         self.ui.buttonBox.rejected.connect(self.cancel)
+        self._populate_source_combo()
+
+    def _populate_source_combo(self):
+        combo = getattr(self.ui, 'comboBoxSource', None)
+        if combo is None:
+            return
+        items = self.main_window._camera_source_items or self.main_window._discover_camera_sources()
+        self.main_window._configure_source_combo(combo, items, select_first_camera=True)
 
     def _start_slot(self, slot, url, displaymode_index, name_place_text):
         busy = getattr(self.main_window, f'busy{slot}')
         if busy:
             QMessageBox.about(self.ui, '错误', f'窗口{slot}忙碌，不可以添加视频流')
-            return
+            return False
+        url = self.main_window._parse_source_input(url)
+        if url == '':
+            QMessageBox.about(self.ui, '错误', '请选择摄像头，或输入有效的视频文件路径 / 流地址。')
+            return False
         if url in self.main_window.cameraList:
             QMessageBox.about(self.ui, '错误', f'摄像头{url}忙碌，不可以重复使用')
-            return
-        started = self.main_window.start_slot(slot, url, displaymode=displaymode_index)
+            return False
+        started = self.main_window.start_slot(
+            slot,
+            url,
+            cameraNamePlace=name_place_text or 'Test Camera, Test Location',
+            displaymode=displaymode_index,
+        )
         if not started:
-            return
-        cam = getattr(self.main_window, f'cam{slot}', None)
-        if cam is not None:
-            cam.displayMode = displaymode_index
-            cam.nameAndLocation = name_place_text or 'Test Camera, Test Location'
+            return False
+        return True
 
     def ok(self):
         if _DEBUG_VERBOSE:
@@ -711,11 +1011,12 @@ class AddWindow():
             if slot_text not in slot_map:
                 QMessageBox.about(self.ui, '错误', '无效的窗口选择')
                 return
-            if self.ui.lineEdit.text() == '':
-                QMessageBox.about(self.ui, '错误', '请输入在文本框中输入内容')
+            source_text = self.main_window._extract_source_combo_value(self.ui.comboBoxSource)
+            if source_text == '':
+                QMessageBox.about(self.ui, '错误', '请选择摄像头，或输入有效的视频文件路径 / 流地址。')
                 return
 
-            cam_url = self.ui.lineEdit.text()
+            cam_url = source_text
             if _DEBUG_VERBOSE:
                 print(type(cam_url))
             if cam_url.isdigit():
@@ -723,16 +1024,19 @@ class AddWindow():
             else:
                 if _DEBUG_VERBOSE:
                     print(type(cam_url))
-            self._start_slot(
+            started = self._start_slot(
                 slot_map[slot_text],
                 cam_url,
                 self.ui.comboBox2.currentIndex(),
                 self.ui.lineEdit2.text(),
             )
+            if started:
+                self.ui.accept()
 
     def cancel(self):
         if _DEBUG_VERBOSE:
             print('push the cancel button')
+        self.ui.reject()
 
 
 class DelWindow():
@@ -806,6 +1110,14 @@ class LuruWindow():
         self.ui.setFont(_default_ui_font())
         self.ui.setStyleSheet(_app_stylesheet())
         self.ui.setFixedSize(self.ui.width(), self.ui.height())
+        self.ui.setWindowTitle('录入人脸')
+        self.ui.lurudisplay.setText('无信号')
+        self.ui.lurudisplay2.setText('无信号')
+        self.ui.lineEdit.setPlaceholderText('请输入您的名字')
+        self.ui.pushButton.setText('拍摄')
+        self.ui.pushButton2.setText('退出')
+        self.ui.pushButton4.setText('重置模型')
+        self.ui.pushButton5.setText('删除人脸')
 
         self.ui.lurudisplay2.setPixmap(QPixmap(asset_path('avatar.png')))
         self.ui.pushButton3.setText('更新模型')
@@ -987,6 +1299,10 @@ class LuruWindow():
             if stem.isdigit():
                 max_idx = max(max_idx, int(stem))
         return max_idx + 1
+
+    @staticmethod
+    def _write_enroll_face_image(target_path, face_img):
+        return _app_service().data_repo.write_face_image(target_path, face_img)
 
     def _set_enroll_controls_enabled(self, enabled):
         self.ui.pushButton.setEnabled(enabled)
@@ -1249,7 +1565,12 @@ class LuruWindow():
                 self._capture_write_index += 1
                 self.sampleNum += 1
                 face_img = frame[y:y + h, x:x + w]
-                cv2.imwrite(str(user_dir / f'{file_index}.jpg'), face_img)
+                saved = self._write_enroll_face_image(user_dir / f'{file_index}.jpg', face_img)
+                if not saved:
+                    self.sampleNum -= 1
+                    self._capture_write_index -= 1
+                    finished_reason = '样本写入失败，请检查用户名或磁盘权限后重试。'
+                    break
                 captured_any = True
                 self._enroll_bridge.capture_progress.emit(self.sampleNum, self.maxSampleNum)
 
@@ -1331,12 +1652,15 @@ class ResetWindow():
         self.ui.setFont(_default_ui_font())
         self.ui.setStyleSheet(_app_stylesheet())
         self.ui.setFixedSize(self.ui.width(), self.ui.height())
+        self.ui.setWindowTitle('是否重置模型？')
+        if hasattr(self.ui, 'label'):
+            self.ui.label.setText('警告：重置将会删除所有人脸样本及识别模型，但会保留情绪模型和检测模型。是否确定重置？')
         self.ui.buttonBox.accepted.connect(self.yes)
-        self.ui.buttonBox.accepted.connect(self.no)
+        self.ui.buttonBox.rejected.connect(self.no)
 
     def yes(self):
         _app_service().reset_face_data()
-        print('重置按钮已经按下，会清空人脸样本、模型和配置')
+        print('重置按钮已经按下，会清空人脸样本与识别模型，但保留其它模型文件')
         print('totalUser:', _app_service().state.total_user)
 
 

@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
+
 from app.services.app_service import AppService
 from app.services.recognition_pipeline import RecognitionPipeline
 from app.repositories import SqlRepository
+from app.repositories import DataRepository
 from data.sql_helper import SqlF
 
 
@@ -80,3 +83,28 @@ def test_recognition_pipeline_provider_display_for_lbph_fallback():
 
     assert pipeline.current_provider_display_text() == "ArcFace：未启用（LBPH 降级）"
     assert "LBPH 降级模式" in pipeline.current_provider_tooltip()
+
+
+def test_data_repository_write_face_image_supports_unicode_path(tmp_path):
+    repo = DataRepository(data_dir=tmp_path / "data", model_dir=tmp_path / "model")
+    image = np.zeros((24, 24), dtype="uint8")
+    target = tmp_path / "中文用户名" / "1.jpg"
+
+    assert repo.write_face_image(target, image) is True
+    assert target.exists()
+
+def test_data_repository_reset_model_dir_keeps_non_face_models(tmp_path):
+    model_dir = tmp_path / "model"
+    model_dir.mkdir(parents=True, exist_ok=True)
+    (model_dir / "model.yml").write_text("lbph", encoding="utf-8")
+    (model_dir / "pending_update.flag").write_text("pending", encoding="utf-8")
+    (model_dir / "emotion_model.h5").write_text("emotion", encoding="utf-8")
+    (model_dir / "yolov8n-face.pt").write_text("yolo", encoding="utf-8")
+
+    repo = DataRepository(data_dir=tmp_path / "data", model_dir=model_dir)
+    repo.reset_model_dir()
+
+    assert not (model_dir / "model.yml").exists()
+    assert not (model_dir / "pending_update.flag").exists()
+    assert (model_dir / "emotion_model.h5").exists()
+    assert (model_dir / "yolov8n-face.pt").exists()

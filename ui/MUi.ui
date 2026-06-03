@@ -353,7 +353,7 @@ font-weight:600;
       <x>10</x>
       <y>30</y>
       <width>371</width>
-      <height>830</height>
+      <height>790</height>
      </rect>
     </property>
     <property name="frameShape">
@@ -368,7 +368,7 @@ font-weight:600;
        <x>0</x>
        <y>0</y>
        <width>371</width>
-       <height>940</height>
+       <height>980</height>
       </rect>
      </property>
      <layout class="QVBoxLayout" name="verticalLayout_2">
@@ -393,8 +393,8 @@ font-weight:600;
            <item><property name="text"><string>纯显示模式</string></property></item>
           </widget>
          </item>
-         <item><widget class="QLabel" name="label_15"><property name="minimumHeight"><number>36</number></property><property name="wordWrap"><bool>true</bool></property><property name="text"><string>摄像头ID或者视频地址</string></property></widget></item>
-         <item><widget class="QLineEdit" name="lineEdit12"/></item>
+         <item><widget class="QLabel" name="label_15"><property name="minimumHeight"><number>36</number></property><property name="wordWrap"><bool>true</bool></property><property name="text"><string>视频源（可选摄像头或手动输入视频路径）</string></property></widget></item>
+         <item><widget class="QComboBox" name="sourceComboBox1"><property name="minimumHeight"><number>34</number></property><property name="editable"><bool>true</bool></property><property name="insertPolicy"><enum>QComboBox::NoInsert</enum></property></widget></item>
         </layout>
        </widget>
       </item>
@@ -414,8 +414,8 @@ font-weight:600;
            <item><property name="text"><string>纯显示模式</string></property></item>
           </widget>
          </item>
-         <item><widget class="QLabel" name="label_12"><property name="minimumHeight"><number>36</number></property><property name="wordWrap"><bool>true</bool></property><property name="text"><string>摄像头ID或者视频地址</string></property></widget></item>
-         <item><widget class="QLineEdit" name="lineEdit22"/></item>
+         <item><widget class="QLabel" name="label_12"><property name="minimumHeight"><number>36</number></property><property name="wordWrap"><bool>true</bool></property><property name="text"><string>视频源（可选摄像头或手动输入视频路径）</string></property></widget></item>
+         <item><widget class="QComboBox" name="sourceComboBox2"><property name="minimumHeight"><number>34</number></property><property name="editable"><bool>true</bool></property><property name="insertPolicy"><enum>QComboBox::NoInsert</enum></property></widget></item>
         </layout>
        </widget>
       </item>
@@ -435,8 +435,8 @@ font-weight:600;
            <item><property name="text"><string>纯显示模式</string></property></item>
           </widget>
          </item>
-         <item><widget class="QLabel" name="label_9"><property name="minimumHeight"><number>36</number></property><property name="wordWrap"><bool>true</bool></property><property name="text"><string>摄像头ID或者视频地址</string></property></widget></item>
-         <item><widget class="QLineEdit" name="lineEdit32"/></item>
+         <item><widget class="QLabel" name="label_9"><property name="minimumHeight"><number>36</number></property><property name="wordWrap"><bool>true</bool></property><property name="text"><string>视频源（可选摄像头或手动输入视频路径）</string></property></widget></item>
+         <item><widget class="QComboBox" name="sourceComboBox3"><property name="minimumHeight"><number>34</number></property><property name="editable"><bool>true</bool></property><property name="insertPolicy"><enum>QComboBox::NoInsert</enum></property></widget></item>
         </layout>
        </widget>
       </item>
@@ -456,8 +456,8 @@ font-weight:600;
            <item><property name="text"><string>纯显示模式</string></property></item>
           </widget>
          </item>
-         <item><widget class="QLabel" name="label_3"><property name="minimumHeight"><number>36</number></property><property name="wordWrap"><bool>true</bool></property><property name="text"><string>摄像头ID或者视频地址</string></property></widget></item>
-         <item><widget class="QLineEdit" name="lineEdit42"/></item>
+         <item><widget class="QLabel" name="label_3"><property name="minimumHeight"><number>36</number></property><property name="wordWrap"><bool>true</bool></property><property name="text"><string>视频源（可选摄像头或手动输入视频路径）</string></property></widget></item>
+         <item><widget class="QComboBox" name="sourceComboBox4"><property name="minimumHeight"><number>34</number></property><property name="editable"><bool>true</bool></property><property name="insertPolicy"><enum>QComboBox::NoInsert</enum></property></widget></item>
         </layout>
        </widget>
       </item>
@@ -481,7 +481,7 @@ font-weight:600;
    <property name="geometry">
     <rect>
      <x>20</x>
-     <y>875</y>
+     <y>836</y>
      <width>351</width>
      <height>36</height>
     </rect>
@@ -489,6 +489,18 @@ font-weight:600;
     <property name="font"><font><family>Microsoft YaHei UI</family><pointsize>11</pointsize></font></property>
     <property name="text"><string>保存配置</string></property>
     <property name="icon"><iconset><normaloff>assets/attachment/saveconfig.png</normaloff>assets/attachment/saveconfig.png</iconset></property>
+   </widget>
+   <widget class="QPushButton" name="pushButtonApplyConfig">
+   <property name="geometry">
+    <rect>
+     <x>20</x>
+     <y>878</y>
+     <width>351</width>
+     <height>36</height>
+    </rect>
+   </property>
+   <property name="font"><font><family>Microsoft YaHei UI</family><pointsize>11</pointsize></font></property>
+   <property name="text"><string>立刻应用</string></property>
    </widget>
   </widget>
  </widget>

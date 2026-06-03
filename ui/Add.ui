@@ -49,6 +49,9 @@
        <property name="minimumWidth">
         <number>150</number>
        </property>
+       <property name="minimumHeight">
+        <number>34</number>
+       </property>
        <property name="editable">
         <bool>false</bool>
        </property>
@@ -65,7 +68,10 @@
       </widget>
      </item>
      <item>
-      <widget class="QLineEdit" name="lineEdit2">
+     <widget class="QLineEdit" name="lineEdit2">
+       <property name="minimumHeight">
+        <number>34</number>
+       </property>
        <property name="placeholderText">
         <string>请输入摄像头名称地址</string>
        </property>
@@ -89,7 +95,7 @@
    <item>
     <widget class="QComboBox" name="comboBox2">
      <property name="minimumHeight">
-      <number>28</number>
+      <number>34</number>
      </property>
      <property name="font">
       <font>
@@ -120,14 +126,20 @@
       </font>
      </property>
      <property name="text">
-      <string>请输入摄像头ID或者视频地址</string>
+      <string>请选择摄像头，或手动输入视频路径 / 流地址</string>
      </property>
     </widget>
    </item>
    <item>
-    <widget class="QLineEdit" name="lineEdit">
+    <widget class="QComboBox" name="comboBoxSource">
      <property name="minimumHeight">
-      <number>28</number>
+      <number>34</number>
+     </property>
+     <property name="editable">
+      <bool>true</bool>
+     </property>
+     <property name="insertPolicy">
+      <enum>QComboBox::NoInsert</enum>
      </property>
     </widget>
    </item>

@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 import datetime as dt
 
+import numpy as np
+
 import sqls
 from paths import CONFIG_DIR, FACE_DATA_DIR, MODEL_DIR
 
@@ -141,6 +143,22 @@ class DataRepository:
         path.mkdir(parents=True, exist_ok=True)
         return path
 
+    @staticmethod
+    def write_face_image(path: str | Path, image: np.ndarray) -> bool:
+        target = Path(path)
+        try:
+            import cv2
+
+            suffix = target.suffix if target.suffix else ".jpg"
+            ok, encoded = cv2.imencode(suffix, image)
+            if not ok:
+                return False
+            target.parent.mkdir(parents=True, exist_ok=True)
+            encoded.tofile(str(target))
+            return True
+        except Exception:
+            return False
+
     def remove_user_dirs(self, username: str, user_id: int | None = None) -> None:
         candidates: list[Path] = [self.data_dir / str(username)]
         if user_id is not None:
@@ -176,15 +194,21 @@ class DataRepository:
             self.data_dir.mkdir(parents=True, exist_ok=True)
 
     def reset_model_dir(self) -> None:
-        if self.model_dir.exists():
-            for item in self.model_dir.iterdir():
-                if item.is_file():
-                    try:
-                        item.unlink()
-                    except OSError:
-                        pass
-        else:
-            self.model_dir.mkdir(parents=True, exist_ok=True)
+        self.model_dir.mkdir(parents=True, exist_ok=True)
+        removable_files = {
+            "model.yml",
+            "model.yaml",
+            "model.npz",
+            "model.onnx",
+            "pending_update.flag",
+        }
+        for item in self.model_dir.iterdir():
+            if (not item.is_file()) or (item.name not in removable_files):
+                continue
+            try:
+                item.unlink()
+            except OSError:
+                pass
 
     def model_file_path(self) -> Path:
         return self.model_dir / "model.yml"

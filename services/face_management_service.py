@@ -78,10 +78,13 @@ class FaceManagementService:
     def reset(self) -> None:
         if self.data_dir.exists():
             shutil.rmtree(self.data_dir)
-        if self.model_path.parent.exists():
-            shutil.rmtree(self.model_path.parent)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.model_path.parent.mkdir(parents=True, exist_ok=True)
+        if self.model_path.exists():
+            self.model_path.unlink()
+        pending_flag = self.model_path.parent / "pending_update.flag"
+        if pending_flag.exists():
+            pending_flag.unlink()
         self._write_id_list([])
         self._write_total_user(0)
         self._write_label_map({})

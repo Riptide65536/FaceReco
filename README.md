@@ -33,6 +33,7 @@ pip install -r requirements.txt
 ### 2) 情绪识别（CNN .h5）
 
 - 文件路径：`model/emotion_model.h5`
+- 建议模型权重下载地址：`https://github.com/TARUN2K3/Emotion-Detection-CNN`
 - 若文件不存在，系统自动回退为 `中性`，不影响主识别流程。
 
 ## 运行

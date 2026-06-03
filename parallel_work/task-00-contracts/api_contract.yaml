@@ -1,0 +1,804 @@
+openapi: 3.1.0
+info:
+  title: MultiCamera Facial Recognition Parallel Contract
+  version: 0.1.0
+  summary: Task-00 frozen REST and WebSocket contract for parallel development.
+  description: >
+    This contract is derived from the current PySide2 desktop application in the
+    repository. It defines the frontend/backend boundary for parallel tasks and
+    does not mean the legacy desktop app has already been replaced.
+servers:
+  - url: http://localhost:8000
+    description: Recommended local backend entry for Task-01
+tags:
+  - name: auth
+  - name: system
+  - name: cameras
+  - name: logs
+  - name: attendance
+  - name: faces
+  - name: models
+paths:
+  /api/auth/login:
+    post:
+      tags: [auth]
+      summary: Validate user credentials
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login succeeded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '401':
+          description: Invalid credentials
+
+  /api/system/status:
+    get:
+      tags: [system]
+      summary: Return current backend, runtime, and model status
+      operationId: getSystemStatus
+      responses:
+        '200':
+          description: Current system status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemStatus'
+
+  /api/cameras:
+    get:
+      tags: [cameras]
+      summary: List camera configs and runtime state
+      operationId: listCameras
+      responses:
+        '200':
+          description: Camera list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CameraListResponse'
+
+  /api/cameras/start:
+    post:
+      tags: [cameras]
+      summary: Start or restart a camera source
+      operationId: startCamera
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CameraStartRequest'
+      responses:
+        '200':
+          description: Camera accepted for startup
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CameraControlResponse'
+        '409':
+          description: Camera source conflict or integrated camera lock conflict
+
+  /api/cameras/stop:
+    post:
+      tags: [cameras]
+      summary: Stop a running camera source
+      operationId: stopCamera
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CameraStopRequest'
+      responses:
+        '200':
+          description: Camera stopped
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CameraControlResponse'
+
+  /api/logs:
+    get:
+      tags: [logs]
+      summary: Query recognition logs with emotion and attendance fields
+      operationId: queryLogs
+      parameters:
+        - $ref: '#/components/parameters/NameQuery'
+        - $ref: '#/components/parameters/LocationQuery'
+        - $ref: '#/components/parameters/StartTimeQuery'
+        - $ref: '#/components/parameters/EndTimeQuery'
+        - $ref: '#/components/parameters/AttendanceTypeQuery'
+        - $ref: '#/components/parameters/StatusQuery'
+      responses:
+        '200':
+          description: Log list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogListResponse'
+
+  /api/attendance:
+    get:
+      tags: [attendance]
+      summary: Query attendance-facing records and summary inputs
+      operationId: queryAttendance
+      parameters:
+        - $ref: '#/components/parameters/NameQuery'
+        - $ref: '#/components/parameters/StartTimeQuery'
+        - $ref: '#/components/parameters/EndTimeQuery'
+      responses:
+        '200':
+          description: Attendance records and summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AttendanceListResponse'
+
+  /api/faces/register:
+    post:
+      tags: [faces]
+      summary: Create or continue an enrollment session
+      operationId: registerFace
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FaceRegisterRequest'
+      responses:
+        '200':
+          description: Enrollment request accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FaceRegisterResponse'
+        '400':
+          description: Invalid request
+
+  /api/faces/{name}:
+    delete:
+      tags: [faces]
+      summary: Delete a user and optionally retrain immediately
+      operationId: deleteFace
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: retrain
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Deletion completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FaceDeleteResponse'
+
+  /api/models/train:
+    post:
+      tags: [models]
+      summary: Rebuild training data and train current face model
+      operationId: trainModel
+      responses:
+        '200':
+          description: Train request finished
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelTrainResponse'
+
+x-websocket-channels:
+  /ws/stream/{camera_id}:
+    summary: Camera stream channel
+    path_parameters:
+      camera_id:
+        type: string
+    client_messages:
+      - type: subscribe
+        description: Client subscribes to one camera stream
+    server_messages:
+      - schema:
+          $ref: '#/components/schemas/EventEnvelope'
+        notes: >
+          event_type is usually camera.frame or vision.observation. If image_data is
+          omitted in the observation event, frontend should keep the latest frame for
+          overlay rendering.
+
+  /ws/events:
+    summary: System-wide event channel
+    client_messages:
+      - type: subscribe
+        description: Client subscribes to all system and vision events
+    server_messages:
+      - schema:
+          $ref: '#/components/schemas/EventEnvelope'
+        notes: >
+          Supported event types are system.status, camera.state, vision.observation,
+          and alert.raised.
+
+components:
+  parameters:
+    NameQuery:
+      name: name
+      in: query
+      required: false
+      schema:
+        type: string
+    LocationQuery:
+      name: location
+      in: query
+      required: false
+      schema:
+        type: string
+    StartTimeQuery:
+      name: start_time
+      in: query
+      required: false
+      schema:
+        type: string
+        format: date-time
+    EndTimeQuery:
+      name: end_time
+      in: query
+      required: false
+      schema:
+        type: string
+        format: date-time
+    AttendanceTypeQuery:
+      name: attendance_type
+      in: query
+      required: false
+      schema:
+        type: string
+    StatusQuery:
+      name: status
+      in: query
+      required: false
+      schema:
+        type: string
+
+  schemas:
+    RuntimeMode:
+      type: string
+      enum: [realtime, balanced, accurate]
+
+    BackendMode:
+      type: string
+      enum: [deep, lbph, lite, unavailable, unknown]
+
+    EventType:
+      type: string
+      enum: [camera.frame, camera.state, system.status, vision.observation, alert.raised]
+
+    LoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+
+    LoginResponse:
+      type: object
+      required: [ok, username]
+      properties:
+        ok:
+          type: boolean
+        username:
+          type: string
+        role:
+          type: string
+          nullable: true
+        token:
+          type: string
+          nullable: true
+
+    CameraDescriptor:
+      type: object
+      required:
+        - camera_id
+        - source_uri
+        - runtime_mode
+        - backend_mode
+        - state
+      properties:
+        camera_id:
+          type: string
+        slot_id:
+          type: integer
+          nullable: true
+        display_name:
+          type: string
+          nullable: true
+        location:
+          type: string
+          nullable: true
+        source_uri:
+          type: string
+          description: Use "0" for the integrated camera to preserve legacy compatibility.
+        state:
+          type: string
+          enum: [starting, running, stopping, stopped, error, offline]
+        runtime_mode:
+          $ref: '#/components/schemas/RuntimeMode'
+        backend_mode:
+          $ref: '#/components/schemas/BackendMode'
+        fps_overlay_enabled:
+          type: boolean
+        model_pending:
+          type: boolean
+
+    CameraListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/CameraDescriptor'
+
+    CameraStartRequest:
+      type: object
+      required: [camera_id, source_uri]
+      properties:
+        camera_id:
+          type: string
+        slot_id:
+          type: integer
+          nullable: true
+        display_name:
+          type: string
+          nullable: true
+        location:
+          type: string
+          nullable: true
+        source_uri:
+          type: string
+        display_mode:
+          type: integer
+          default: 0
+          description: Legacy-compatible display mode. 0=full, 1=simple, 2=display-only.
+        runtime_mode:
+          $ref: '#/components/schemas/RuntimeMode'
+
+    CameraStopRequest:
+      type: object
+      required: [camera_id]
+      properties:
+        camera_id:
+          type: string
+
+    CameraControlResponse:
+      type: object
+      required: [ok, camera]
+      properties:
+        ok:
+          type: boolean
+        message:
+          type: string
+          nullable: true
+        camera:
+          $ref: '#/components/schemas/CameraDescriptor'
+
+    LogRecord:
+      type: object
+      required: [name, location, timestamp, emotion, attendance_type, status]
+      properties:
+        name:
+          type: string
+        location:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        emotion:
+          type: string
+        attendance_type:
+          type: string
+        status:
+          type: string
+        image_path:
+          type: string
+          nullable: true
+
+    LogListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/LogRecord'
+
+    AttendanceSummaryItem:
+      type: object
+      required: [name, counts]
+      properties:
+        name:
+          type: string
+        counts:
+          type: object
+          additionalProperties:
+            type: integer
+
+    AttendanceListResponse:
+      type: object
+      required: [items, summary]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/LogRecord'
+        summary:
+          type: array
+          items:
+            $ref: '#/components/schemas/AttendanceSummaryItem'
+
+    FaceRegisterRequest:
+      type: object
+      required: [name, mode]
+      properties:
+        name:
+          type: string
+        mode:
+          type: string
+          enum: [from_camera, upload]
+        camera_id:
+          type: string
+          nullable: true
+        sample_count_target:
+          type: integer
+          default: 20
+        auto_train:
+          type: boolean
+          default: false
+
+    FaceRegisterResponse:
+      type: object
+      required: [ok, name, model_pending]
+      properties:
+        ok:
+          type: boolean
+        name:
+          type: string
+        enrollment_session_id:
+          type: string
+          nullable: true
+        sample_count_target:
+          type: integer
+          nullable: true
+        model_pending:
+          type: boolean
+        message:
+          type: string
+          nullable: true
+
+    FaceDeleteResponse:
+      type: object
+      required: [ok, name, model_pending]
+      properties:
+        ok:
+          type: boolean
+        name:
+          type: string
+        retrained:
+          type: boolean
+        model_pending:
+          type: boolean
+
+    ModelTrainResponse:
+      type: object
+      required: [ok, backend_mode, model_pending]
+      properties:
+        ok:
+          type: boolean
+        backend_mode:
+          $ref: '#/components/schemas/BackendMode'
+        model_pending:
+          type: boolean
+        sample_count:
+          type: integer
+          nullable: true
+        user_count:
+          type: integer
+          nullable: true
+        detail:
+          type: string
+          nullable: true
+
+    SystemStatus:
+      type: object
+      required:
+        - runtime_mode
+        - backend_mode
+        - model_pending
+        - fps_overlay_enabled
+        - active_cameras
+        - registered_users
+        - degraded
+      properties:
+        runtime_mode:
+          $ref: '#/components/schemas/RuntimeMode'
+        backend_mode:
+          $ref: '#/components/schemas/BackendMode'
+        provider_chain:
+          type: array
+          items:
+            type: string
+        provider_display:
+          type: string
+          nullable: true
+        model_pending:
+          type: boolean
+        fps_overlay_enabled:
+          type: boolean
+        active_cameras:
+          type: integer
+        registered_users:
+          type: integer
+        degraded:
+          type: boolean
+        legacy_mode_available:
+          type: boolean
+          default: true
+
+    FramePacket:
+      type: object
+      required:
+        - camera_id
+        - frame_id
+        - captured_at
+        - source_uri
+        - width
+        - height
+        - color_space
+        - runtime_mode
+        - backend_mode
+      properties:
+        camera_id:
+          type: string
+        slot_id:
+          type: integer
+          nullable: true
+        frame_id:
+          type: integer
+        captured_at:
+          type: string
+          format: date-time
+        source_uri:
+          type: string
+        width:
+          type: integer
+        height:
+          type: integer
+        color_space:
+          type: string
+          enum: [bgr, rgb, gray]
+        image_encoding:
+          type: string
+          enum: [jpeg_base64, png_base64, none]
+          nullable: true
+        image_data:
+          type: string
+          nullable: true
+        runtime_mode:
+          $ref: '#/components/schemas/RuntimeMode'
+        backend_mode:
+          $ref: '#/components/schemas/BackendMode'
+
+    DetectionResult:
+      type: object
+      required: [camera_id, frame_id, bbox, quality, detector]
+      properties:
+        camera_id:
+          type: string
+        frame_id:
+          type: integer
+        track_id:
+          type: integer
+          nullable: true
+        bbox:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items:
+            type: integer
+        det_score:
+          type: number
+          nullable: true
+        quality:
+          type: string
+          enum: [good, weak, bad]
+        detector:
+          type: string
+        recognition_skipped:
+          type: boolean
+          nullable: true
+
+    RecognitionResult:
+      type: object
+      required: [camera_id, frame_id, bbox, name, backend_mode]
+      properties:
+        camera_id:
+          type: string
+        frame_id:
+          type: integer
+        track_id:
+          type: integer
+          nullable: true
+        bbox:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items:
+            type: integer
+        label_id:
+          type: integer
+          nullable: true
+        name:
+          type: string
+        similarity:
+          type: number
+          nullable: true
+        confidence:
+          type: number
+          nullable: true
+        backend_mode:
+          $ref: '#/components/schemas/BackendMode'
+        match_reason:
+          type: string
+          nullable: true
+
+    EmotionResult:
+      type: object
+      required: [camera_id, frame_id, emotion, confidence, quality, reason]
+      properties:
+        camera_id:
+          type: string
+        frame_id:
+          type: integer
+        track_id:
+          type: integer
+          nullable: true
+        name:
+          type: string
+          nullable: true
+        bbox:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items:
+            type: integer
+          nullable: true
+        emotion:
+          type: string
+        confidence:
+          type: number
+        quality:
+          type: string
+          enum: [good, weak, bad, fallback]
+        reason:
+          type: string
+
+    AlertResult:
+      type: object
+      required:
+        - alert_id
+        - alert_type
+        - severity
+        - status
+        - title
+        - message
+        - occurred_at
+      properties:
+        alert_id:
+          type: string
+        camera_id:
+          type: string
+          nullable: true
+        frame_id:
+          type: integer
+          nullable: true
+        track_id:
+          type: integer
+          nullable: true
+        alert_type:
+          type: string
+          enum:
+            - unknown_face
+            - camera_offline
+            - backend_degraded
+            - model_pending
+            - attendance_absence
+            - stream_error
+        severity:
+          type: string
+          enum: [info, warning, critical]
+        status:
+          type: string
+          enum: [open, acknowledged, resolved]
+        title:
+          type: string
+        message:
+          type: string
+        occurred_at:
+          type: string
+          format: date-time
+        evidence:
+          type: object
+          nullable: true
+          additionalProperties: true
+
+    VisionObservation:
+      type: object
+      required: [frame, detections, recognitions, emotions, alerts, system_status]
+      properties:
+        frame:
+          $ref: '#/components/schemas/FramePacket'
+        detections:
+          type: array
+          items:
+            $ref: '#/components/schemas/DetectionResult'
+        recognitions:
+          type: array
+          items:
+            $ref: '#/components/schemas/RecognitionResult'
+        emotions:
+          type: array
+          items:
+            $ref: '#/components/schemas/EmotionResult'
+        alerts:
+          type: array
+          items:
+            $ref: '#/components/schemas/AlertResult'
+        system_status:
+          $ref: '#/components/schemas/SystemStatus'
+
+    CameraStatePayload:
+      type: object
+      required: [camera_id, state]
+      properties:
+        camera_id:
+          type: string
+        state:
+          type: string
+          enum: [starting, running, stopping, stopped, error, offline]
+        message:
+          type: string
+          nullable: true
+
+    EventEnvelope:
+      type: object
+      required: [event_type, event_version, emitted_at, payload]
+      properties:
+        event_type:
+          $ref: '#/components/schemas/EventType'
+        event_version:
+          type: string
+          enum: [v1]
+        emitted_at:
+          type: string
+          format: date-time
+        payload:
+          oneOf:
+            - $ref: '#/components/schemas/FramePacket'
+            - $ref: '#/components/schemas/CameraStatePayload'
+            - $ref: '#/components/schemas/SystemStatus'
+            - $ref: '#/components/schemas/VisionObservation'
+            - $ref: '#/components/schemas/AlertResult'

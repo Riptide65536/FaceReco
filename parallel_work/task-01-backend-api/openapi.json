@@ -1,0 +1,2799 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Task-01 Backend API",
+    "version": "0.2.0",
+    "summary": "Backend API adapter for the parallel facial recognition migration.",
+    "description": "Standalone backend API built in parallel_work/task-01-backend-api. It wraps the existing Python recognition and data layer and aligns its public REST/WebSocket shape with parallel_work/task-00-contracts."
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:18080"
+    }
+  ],
+  "tags": [
+    {
+      "name": "auth"
+    },
+    {
+      "name": "system"
+    },
+    {
+      "name": "cameras"
+    },
+    {
+      "name": "logs"
+    },
+    {
+      "name": "attendance"
+    },
+    {
+      "name": "faces"
+    },
+    {
+      "name": "models"
+    }
+  ],
+  "components": {
+    "schemas": {
+      "HealthResponse": {
+        "properties": {
+          "status": {
+            "const": "ok",
+            "title": "Status",
+            "type": "string"
+          },
+          "service": {
+            "title": "Service",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "string"
+          },
+          "time": {
+            "format": "date-time",
+            "title": "Time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "service",
+          "version",
+          "time"
+        ],
+        "title": "HealthResponse",
+        "type": "object"
+      },
+      "ErrorResponse": {
+        "properties": {
+          "error": {
+            "title": "Error",
+            "type": "string"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Detail"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "title": "ErrorResponse",
+        "type": "object"
+      },
+      "LoginRequest": {
+        "properties": {
+          "username": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Username",
+            "type": "string"
+          },
+          "password": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "password"
+        ],
+        "title": "LoginRequest",
+        "type": "object"
+      },
+      "LoginResponse": {
+        "properties": {
+          "ok": {
+            "default": true,
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "username": {
+            "title": "Username",
+            "type": "string"
+          },
+          "role": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": "admin",
+            "title": "Role"
+          },
+          "token": {
+            "title": "Token",
+            "type": "string"
+          },
+          "access_token": {
+            "title": "Access Token",
+            "type": "string"
+          },
+          "token_type": {
+            "const": "Bearer",
+            "default": "Bearer",
+            "title": "Token Type",
+            "type": "string"
+          },
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "token",
+          "access_token",
+          "expires_at"
+        ],
+        "title": "LoginResponse",
+        "type": "object"
+      },
+      "SystemStatus": {
+        "properties": {
+          "runtime_mode": {
+            "enum": [
+              "realtime",
+              "balanced",
+              "accurate"
+            ],
+            "title": "Runtime Mode",
+            "type": "string"
+          },
+          "backend_mode": {
+            "enum": [
+              "deep",
+              "lbph",
+              "lite",
+              "unavailable",
+              "unknown"
+            ],
+            "title": "Backend Mode",
+            "type": "string"
+          },
+          "provider_chain": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Provider Chain",
+            "type": "array"
+          },
+          "provider_display": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Provider Display"
+          },
+          "model_pending": {
+            "title": "Model Pending",
+            "type": "boolean"
+          },
+          "fps_overlay_enabled": {
+            "title": "Fps Overlay Enabled",
+            "type": "boolean"
+          },
+          "active_cameras": {
+            "title": "Active Cameras",
+            "type": "integer"
+          },
+          "registered_users": {
+            "title": "Registered Users",
+            "type": "integer"
+          },
+          "degraded": {
+            "title": "Degraded",
+            "type": "boolean"
+          },
+          "legacy_mode_available": {
+            "default": true,
+            "title": "Legacy Mode Available",
+            "type": "boolean"
+          },
+          "service": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Service"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Version"
+          },
+          "time": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Time"
+          },
+          "db_backend": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Db Backend"
+          },
+          "recognition_error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Recognition Error"
+          },
+          "emotion_model_format": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Emotion Model Format"
+          },
+          "emotion_runtime_device": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Emotion Runtime Device"
+          },
+          "configured_cameras": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Configured Cameras"
+          },
+          "system_lock_slot": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "System Lock Slot"
+          },
+          "custom_attendance_active": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Custom Attendance Active"
+          },
+          "custom_attendance_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Custom Attendance Label"
+          }
+        },
+        "required": [
+          "runtime_mode",
+          "backend_mode",
+          "model_pending",
+          "fps_overlay_enabled",
+          "active_cameras",
+          "registered_users",
+          "degraded"
+        ],
+        "title": "SystemStatus",
+        "type": "object"
+      },
+      "CameraListResponse": {
+        "$defs": {
+          "CameraDescriptor": {
+            "properties": {
+              "camera_id": {
+                "title": "Camera Id",
+                "type": "string"
+              },
+              "slot_id": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Slot Id"
+              },
+              "display_name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Display Name"
+              },
+              "location": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Location"
+              },
+              "source_uri": {
+                "title": "Source Uri",
+                "type": "string"
+              },
+              "state": {
+                "enum": [
+                  "starting",
+                  "running",
+                  "stopping",
+                  "stopped",
+                  "error",
+                  "offline"
+                ],
+                "title": "State",
+                "type": "string"
+              },
+              "runtime_mode": {
+                "enum": [
+                  "realtime",
+                  "balanced",
+                  "accurate"
+                ],
+                "title": "Runtime Mode",
+                "type": "string"
+              },
+              "backend_mode": {
+                "enum": [
+                  "deep",
+                  "lbph",
+                  "lite",
+                  "unavailable",
+                  "unknown"
+                ],
+                "title": "Backend Mode",
+                "type": "string"
+              },
+              "fps_overlay_enabled": {
+                "title": "Fps Overlay Enabled",
+                "type": "boolean"
+              },
+              "model_pending": {
+                "title": "Model Pending",
+                "type": "boolean"
+              },
+              "display_mode": {
+                "default": 0,
+                "title": "Display Mode",
+                "type": "integer"
+              },
+              "configured": {
+                "default": false,
+                "title": "Configured",
+                "type": "boolean"
+              },
+              "frame_id": {
+                "default": 0,
+                "title": "Frame Id",
+                "type": "integer"
+              },
+              "fps": {
+                "default": 0.0,
+                "title": "Fps",
+                "type": "number"
+              },
+              "last_error": {
+                "default": "",
+                "title": "Last Error",
+                "type": "string"
+              },
+              "started_at": {
+                "anyOf": [
+                  {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Started At"
+              },
+              "last_frame_at": {
+                "anyOf": [
+                  {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Last Frame At"
+              }
+            },
+            "required": [
+              "camera_id",
+              "source_uri",
+              "state",
+              "runtime_mode",
+              "backend_mode",
+              "fps_overlay_enabled",
+              "model_pending"
+            ],
+            "title": "CameraDescriptor",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CameraDescriptor"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "CameraListResponse",
+        "type": "object"
+      },
+      "CameraStartRequest": {
+        "properties": {
+          "camera_id": {
+            "title": "Camera Id",
+            "type": "string"
+          },
+          "slot_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Slot Id"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Display Name"
+          },
+          "location": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Location"
+          },
+          "source_uri": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source Uri"
+          },
+          "source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Source"
+          },
+          "display_mode": {
+            "default": 0,
+            "maximum": 10,
+            "minimum": 0,
+            "title": "Display Mode",
+            "type": "integer"
+          },
+          "runtime_mode": {
+            "anyOf": [
+              {
+                "enum": [
+                  "realtime",
+                  "balanced",
+                  "accurate"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Runtime Mode"
+          }
+        },
+        "required": [
+          "camera_id"
+        ],
+        "title": "CameraStartRequest",
+        "type": "object"
+      },
+      "CameraStopRequest": {
+        "properties": {
+          "camera_id": {
+            "title": "Camera Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "camera_id"
+        ],
+        "title": "CameraStopRequest",
+        "type": "object"
+      },
+      "CameraControlResponse": {
+        "$defs": {
+          "CameraDescriptor": {
+            "properties": {
+              "camera_id": {
+                "title": "Camera Id",
+                "type": "string"
+              },
+              "slot_id": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Slot Id"
+              },
+              "display_name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Display Name"
+              },
+              "location": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Location"
+              },
+              "source_uri": {
+                "title": "Source Uri",
+                "type": "string"
+              },
+              "state": {
+                "enum": [
+                  "starting",
+                  "running",
+                  "stopping",
+                  "stopped",
+                  "error",
+                  "offline"
+                ],
+                "title": "State",
+                "type": "string"
+              },
+              "runtime_mode": {
+                "enum": [
+                  "realtime",
+                  "balanced",
+                  "accurate"
+                ],
+                "title": "Runtime Mode",
+                "type": "string"
+              },
+              "backend_mode": {
+                "enum": [
+                  "deep",
+                  "lbph",
+                  "lite",
+                  "unavailable",
+                  "unknown"
+                ],
+                "title": "Backend Mode",
+                "type": "string"
+              },
+              "fps_overlay_enabled": {
+                "title": "Fps Overlay Enabled",
+                "type": "boolean"
+              },
+              "model_pending": {
+                "title": "Model Pending",
+                "type": "boolean"
+              },
+              "display_mode": {
+                "default": 0,
+                "title": "Display Mode",
+                "type": "integer"
+              },
+              "configured": {
+                "default": false,
+                "title": "Configured",
+                "type": "boolean"
+              },
+              "frame_id": {
+                "default": 0,
+                "title": "Frame Id",
+                "type": "integer"
+              },
+              "fps": {
+                "default": 0.0,
+                "title": "Fps",
+                "type": "number"
+              },
+              "last_error": {
+                "default": "",
+                "title": "Last Error",
+                "type": "string"
+              },
+              "started_at": {
+                "anyOf": [
+                  {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Started At"
+              },
+              "last_frame_at": {
+                "anyOf": [
+                  {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Last Frame At"
+              }
+            },
+            "required": [
+              "camera_id",
+              "source_uri",
+              "state",
+              "runtime_mode",
+              "backend_mode",
+              "fps_overlay_enabled",
+              "model_pending"
+            ],
+            "title": "CameraDescriptor",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Message"
+          },
+          "camera": {
+            "$ref": "#/components/schemas/CameraDescriptor"
+          }
+        },
+        "required": [
+          "ok",
+          "camera"
+        ],
+        "title": "CameraControlResponse",
+        "type": "object"
+      },
+      "LogListResponse": {
+        "$defs": {
+          "LogRecord": {
+            "properties": {
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "location": {
+                "title": "Location",
+                "type": "string"
+              },
+              "timestamp": {
+                "format": "date-time",
+                "title": "Timestamp",
+                "type": "string"
+              },
+              "emotion": {
+                "title": "Emotion",
+                "type": "string"
+              },
+              "attendance_type": {
+                "title": "Attendance Type",
+                "type": "string"
+              },
+              "status": {
+                "title": "Status",
+                "type": "string"
+              },
+              "image_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Image Path"
+              }
+            },
+            "required": [
+              "name",
+              "location",
+              "timestamp",
+              "emotion",
+              "attendance_type",
+              "status"
+            ],
+            "title": "LogRecord",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LogRecord"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Total"
+          },
+          "page": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Page"
+          },
+          "page_size": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Page Size"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "LogListResponse",
+        "type": "object"
+      },
+      "AttendanceListResponse": {
+        "$defs": {
+          "AttendanceSummaryItem": {
+            "properties": {
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "counts": {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "title": "Counts",
+                "type": "object"
+              }
+            },
+            "required": [
+              "name",
+              "counts"
+            ],
+            "title": "AttendanceSummaryItem",
+            "type": "object"
+          },
+          "LogRecord": {
+            "properties": {
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "location": {
+                "title": "Location",
+                "type": "string"
+              },
+              "timestamp": {
+                "format": "date-time",
+                "title": "Timestamp",
+                "type": "string"
+              },
+              "emotion": {
+                "title": "Emotion",
+                "type": "string"
+              },
+              "attendance_type": {
+                "title": "Attendance Type",
+                "type": "string"
+              },
+              "status": {
+                "title": "Status",
+                "type": "string"
+              },
+              "image_path": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Image Path"
+              }
+            },
+            "required": [
+              "name",
+              "location",
+              "timestamp",
+              "emotion",
+              "attendance_type",
+              "status"
+            ],
+            "title": "LogRecord",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LogRecord"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "summary": {
+            "items": {
+              "$ref": "#/components/schemas/AttendanceSummaryItem"
+            },
+            "title": "Summary",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "summary"
+        ],
+        "title": "AttendanceListResponse",
+        "type": "object"
+      },
+      "FaceLibraryResponse": {
+        "$defs": {
+          "FaceLibraryEntry": {
+            "properties": {
+              "user_id": {
+                "title": "User Id",
+                "type": "integer"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "sample_count": {
+                "title": "Sample Count",
+                "type": "integer"
+              },
+              "directory": {
+                "title": "Directory",
+                "type": "string"
+              },
+              "model_pending": {
+                "title": "Model Pending",
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "user_id",
+              "name",
+              "sample_count",
+              "directory",
+              "model_pending"
+            ],
+            "title": "FaceLibraryEntry",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FaceLibraryEntry"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "model_pending": {
+            "title": "Model Pending",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "model_pending"
+        ],
+        "title": "FaceLibraryResponse",
+        "type": "object"
+      },
+      "FaceRegisterRequest": {
+        "$defs": {
+          "FaceImagePayload": {
+            "properties": {
+              "filename": {
+                "title": "Filename",
+                "type": "string"
+              },
+              "content_base64": {
+                "title": "Content Base64",
+                "type": "string"
+              }
+            },
+            "required": [
+              "filename",
+              "content_base64"
+            ],
+            "title": "FaceImagePayload",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Name"
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Username"
+          },
+          "mode": {
+            "default": "upload",
+            "enum": [
+              "from_camera",
+              "upload"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "camera_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Camera Id"
+          },
+          "sample_count_target": {
+            "default": 20,
+            "maximum": 200,
+            "minimum": 1,
+            "title": "Sample Count Target",
+            "type": "integer"
+          },
+          "auto_train": {
+            "default": false,
+            "title": "Auto Train",
+            "type": "boolean"
+          },
+          "images": {
+            "items": {
+              "$ref": "#/components/schemas/FaceImagePayload"
+            },
+            "title": "Images",
+            "type": "array"
+          },
+          "replace_existing": {
+            "default": false,
+            "title": "Replace Existing",
+            "type": "boolean"
+          }
+        },
+        "title": "FaceRegisterRequest",
+        "type": "object"
+      },
+      "FaceRegisterResponse": {
+        "properties": {
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "enrollment_session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Enrollment Session Id"
+          },
+          "sample_count_target": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sample Count Target"
+          },
+          "model_pending": {
+            "title": "Model Pending",
+            "type": "boolean"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Message"
+          },
+          "user_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "User Id"
+          },
+          "saved_images": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Saved Images"
+          },
+          "rebuild_success": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Rebuild Success"
+          }
+        },
+        "required": [
+          "ok",
+          "name",
+          "model_pending"
+        ],
+        "title": "FaceRegisterResponse",
+        "type": "object"
+      },
+      "FaceDeleteResponse": {
+        "properties": {
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "retrained": {
+            "title": "Retrained",
+            "type": "boolean"
+          },
+          "model_pending": {
+            "title": "Model Pending",
+            "type": "boolean"
+          },
+          "message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Message"
+          }
+        },
+        "required": [
+          "ok",
+          "name",
+          "retrained",
+          "model_pending"
+        ],
+        "title": "FaceDeleteResponse",
+        "type": "object"
+      },
+      "ModelTrainResponse": {
+        "properties": {
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "backend_mode": {
+            "enum": [
+              "deep",
+              "lbph",
+              "lite",
+              "unavailable",
+              "unknown"
+            ],
+            "title": "Backend Mode",
+            "type": "string"
+          },
+          "model_pending": {
+            "title": "Model Pending",
+            "type": "boolean"
+          },
+          "sample_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Sample Count"
+          },
+          "user_count": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "User Count"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Detail"
+          }
+        },
+        "required": [
+          "ok",
+          "backend_mode",
+          "model_pending"
+        ],
+        "title": "ModelTrainResponse",
+        "type": "object"
+      },
+      "EventEnvelope": {
+        "$defs": {
+          "AlertResult": {
+            "properties": {
+              "alert_id": {
+                "title": "Alert Id",
+                "type": "string"
+              },
+              "camera_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Camera Id"
+              },
+              "frame_id": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Frame Id"
+              },
+              "track_id": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Track Id"
+              },
+              "alert_type": {
+                "enum": [
+                  "unknown_face",
+                  "camera_offline",
+                  "backend_degraded",
+                  "model_pending",
+                  "attendance_absence",
+                  "stream_error"
+                ],
+                "title": "Alert Type",
+                "type": "string"
+              },
+              "severity": {
+                "enum": [
+                  "info",
+                  "warning",
+                  "critical"
+                ],
+                "title": "Severity",
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "open",
+                  "acknowledged",
+                  "resolved"
+                ],
+                "title": "Status",
+                "type": "string"
+              },
+              "title": {
+                "title": "Title",
+                "type": "string"
+              },
+              "message": {
+                "title": "Message",
+                "type": "string"
+              },
+              "occurred_at": {
+                "format": "date-time",
+                "title": "Occurred At",
+                "type": "string"
+              },
+              "evidence": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Evidence"
+              }
+            },
+            "required": [
+              "alert_id",
+              "alert_type",
+              "severity",
+              "status",
+              "title",
+              "message",
+              "occurred_at"
+            ],
+            "title": "AlertResult",
+            "type": "object"
+          },
+          "CameraStatePayload": {
+            "properties": {
+              "camera_id": {
+                "title": "Camera Id",
+                "type": "string"
+              },
+              "state": {
+                "enum": [
+                  "starting",
+                  "running",
+                  "stopping",
+                  "stopped",
+                  "error",
+                  "offline"
+                ],
+                "title": "State",
+                "type": "string"
+              },
+              "message": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Message"
+              }
+            },
+            "required": [
+              "camera_id",
+              "state"
+            ],
+            "title": "CameraStatePayload",
+            "type": "object"
+          },
+          "DetectionResult": {
+            "properties": {
+              "camera_id": {
+                "title": "Camera Id",
+                "type": "string"
+              },
+              "frame_id": {
+                "title": "Frame Id",
+                "type": "integer"
+              },
+              "track_id": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Track Id"
+              },
+              "bbox": {
+                "items": {
+                  "type": "integer"
+                },
+                "maxItems": 4,
+                "minItems": 4,
+                "title": "Bbox",
+                "type": "array"
+              },
+              "det_score": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Det Score"
+              },
+              "quality": {
+                "enum": [
+                  "good",
+                  "weak",
+                  "bad"
+                ],
+                "title": "Quality",
+                "type": "string"
+              },
+              "detector": {
+                "title": "Detector",
+                "type": "string"
+              },
+              "recognition_skipped": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Recognition Skipped"
+              }
+            },
+            "required": [
+              "camera_id",
+              "frame_id",
+              "bbox",
+              "quality",
+              "detector"
+            ],
+            "title": "DetectionResult",
+            "type": "object"
+          },
+          "EmotionResult": {
+            "properties": {
+              "camera_id": {
+                "title": "Camera Id",
+                "type": "string"
+              },
+              "frame_id": {
+                "title": "Frame Id",
+                "type": "integer"
+              },
+              "track_id": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Track Id"
+              },
+              "name": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Name"
+              },
+              "bbox": {
+                "anyOf": [
+                  {
+                    "items": {
+                      "type": "integer"
+                    },
+                    "maxItems": 4,
+                    "minItems": 4,
+                    "type": "array"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Bbox"
+              },
+              "emotion": {
+                "title": "Emotion",
+                "type": "string"
+              },
+              "confidence": {
+                "title": "Confidence",
+                "type": "number"
+              },
+              "quality": {
+                "enum": [
+                  "good",
+                  "weak",
+                  "bad",
+                  "fallback"
+                ],
+                "title": "Quality",
+                "type": "string"
+              },
+              "reason": {
+                "title": "Reason",
+                "type": "string"
+              }
+            },
+            "required": [
+              "camera_id",
+              "frame_id",
+              "emotion",
+              "confidence",
+              "quality",
+              "reason"
+            ],
+            "title": "EmotionResult",
+            "type": "object"
+          },
+          "FramePacket": {
+            "properties": {
+              "camera_id": {
+                "title": "Camera Id",
+                "type": "string"
+              },
+              "slot_id": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Slot Id"
+              },
+              "frame_id": {
+                "title": "Frame Id",
+                "type": "integer"
+              },
+              "captured_at": {
+                "format": "date-time",
+                "title": "Captured At",
+                "type": "string"
+              },
+              "source_uri": {
+                "title": "Source Uri",
+                "type": "string"
+              },
+              "width": {
+                "title": "Width",
+                "type": "integer"
+              },
+              "height": {
+                "title": "Height",
+                "type": "integer"
+              },
+              "color_space": {
+                "default": "bgr",
+                "enum": [
+                  "bgr",
+                  "rgb",
+                  "gray"
+                ],
+                "title": "Color Space",
+                "type": "string"
+              },
+              "image_encoding": {
+                "anyOf": [
+                  {
+                    "enum": [
+                      "jpeg_base64",
+                      "png_base64",
+                      "none"
+                    ],
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": "jpeg_base64",
+                "title": "Image Encoding"
+              },
+              "image_data": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Image Data"
+              },
+              "runtime_mode": {
+                "enum": [
+                  "realtime",
+                  "balanced",
+                  "accurate"
+                ],
+                "title": "Runtime Mode",
+                "type": "string"
+              },
+              "backend_mode": {
+                "enum": [
+                  "deep",
+                  "lbph",
+                  "lite",
+                  "unavailable",
+                  "unknown"
+                ],
+                "title": "Backend Mode",
+                "type": "string"
+              }
+            },
+            "required": [
+              "camera_id",
+              "frame_id",
+              "captured_at",
+              "source_uri",
+              "width",
+              "height",
+              "runtime_mode",
+              "backend_mode"
+            ],
+            "title": "FramePacket",
+            "type": "object"
+          },
+          "RecognitionResult": {
+            "properties": {
+              "camera_id": {
+                "title": "Camera Id",
+                "type": "string"
+              },
+              "frame_id": {
+                "title": "Frame Id",
+                "type": "integer"
+              },
+              "track_id": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Track Id"
+              },
+              "bbox": {
+                "items": {
+                  "type": "integer"
+                },
+                "maxItems": 4,
+                "minItems": 4,
+                "title": "Bbox",
+                "type": "array"
+              },
+              "label_id": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Label Id"
+              },
+              "name": {
+                "title": "Name",
+                "type": "string"
+              },
+              "similarity": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Similarity"
+              },
+              "confidence": {
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Confidence"
+              },
+              "backend_mode": {
+                "enum": [
+                  "deep",
+                  "lbph",
+                  "lite",
+                  "unavailable",
+                  "unknown"
+                ],
+                "title": "Backend Mode",
+                "type": "string"
+              },
+              "match_reason": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Match Reason"
+              }
+            },
+            "required": [
+              "camera_id",
+              "frame_id",
+              "bbox",
+              "name",
+              "backend_mode"
+            ],
+            "title": "RecognitionResult",
+            "type": "object"
+          },
+          "SystemStatus": {
+            "properties": {
+              "runtime_mode": {
+                "enum": [
+                  "realtime",
+                  "balanced",
+                  "accurate"
+                ],
+                "title": "Runtime Mode",
+                "type": "string"
+              },
+              "backend_mode": {
+                "enum": [
+                  "deep",
+                  "lbph",
+                  "lite",
+                  "unavailable",
+                  "unknown"
+                ],
+                "title": "Backend Mode",
+                "type": "string"
+              },
+              "provider_chain": {
+                "items": {
+                  "type": "string"
+                },
+                "title": "Provider Chain",
+                "type": "array"
+              },
+              "provider_display": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Provider Display"
+              },
+              "model_pending": {
+                "title": "Model Pending",
+                "type": "boolean"
+              },
+              "fps_overlay_enabled": {
+                "title": "Fps Overlay Enabled",
+                "type": "boolean"
+              },
+              "active_cameras": {
+                "title": "Active Cameras",
+                "type": "integer"
+              },
+              "registered_users": {
+                "title": "Registered Users",
+                "type": "integer"
+              },
+              "degraded": {
+                "title": "Degraded",
+                "type": "boolean"
+              },
+              "legacy_mode_available": {
+                "default": true,
+                "title": "Legacy Mode Available",
+                "type": "boolean"
+              },
+              "service": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Service"
+              },
+              "version": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Version"
+              },
+              "time": {
+                "anyOf": [
+                  {
+                    "format": "date-time",
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Time"
+              },
+              "db_backend": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Db Backend"
+              },
+              "recognition_error": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Recognition Error"
+              },
+              "emotion_model_format": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Emotion Model Format"
+              },
+              "emotion_runtime_device": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Emotion Runtime Device"
+              },
+              "configured_cameras": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Configured Cameras"
+              },
+              "system_lock_slot": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "System Lock Slot"
+              },
+              "custom_attendance_active": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Custom Attendance Active"
+              },
+              "custom_attendance_label": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Custom Attendance Label"
+              }
+            },
+            "required": [
+              "runtime_mode",
+              "backend_mode",
+              "model_pending",
+              "fps_overlay_enabled",
+              "active_cameras",
+              "registered_users",
+              "degraded"
+            ],
+            "title": "SystemStatus",
+            "type": "object"
+          },
+          "VisionObservation": {
+            "properties": {
+              "frame": {
+                "$ref": "#/components/schemas/FramePacket"
+              },
+              "detections": {
+                "items": {
+                  "$ref": "#/components/schemas/DetectionResult"
+                },
+                "title": "Detections",
+                "type": "array"
+              },
+              "recognitions": {
+                "items": {
+                  "$ref": "#/components/schemas/RecognitionResult"
+                },
+                "title": "Recognitions",
+                "type": "array"
+              },
+              "emotions": {
+                "items": {
+                  "$ref": "#/components/schemas/EmotionResult"
+                },
+                "title": "Emotions",
+                "type": "array"
+              },
+              "alerts": {
+                "items": {
+                  "$ref": "#/components/schemas/AlertResult"
+                },
+                "title": "Alerts",
+                "type": "array"
+              },
+              "system_status": {
+                "$ref": "#/components/schemas/SystemStatus"
+              }
+            },
+            "required": [
+              "frame",
+              "detections",
+              "recognitions",
+              "emotions",
+              "alerts",
+              "system_status"
+            ],
+            "title": "VisionObservation",
+            "type": "object"
+          }
+        },
+        "properties": {
+          "event_type": {
+            "enum": [
+              "camera.frame",
+              "camera.state",
+              "system.status",
+              "vision.observation",
+              "alert.raised"
+            ],
+            "title": "Event Type",
+            "type": "string"
+          },
+          "event_version": {
+            "const": "v1",
+            "default": "v1",
+            "title": "Event Version",
+            "type": "string"
+          },
+          "emitted_at": {
+            "format": "date-time",
+            "title": "Emitted At",
+            "type": "string"
+          },
+          "payload": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FramePacket"
+              },
+              {
+                "$ref": "#/components/schemas/CameraStatePayload"
+              },
+              {
+                "$ref": "#/components/schemas/SystemStatus"
+              },
+              {
+                "$ref": "#/components/schemas/VisionObservation"
+              },
+              {
+                "$ref": "#/components/schemas/AlertResult"
+              }
+            ],
+            "title": "Payload"
+          }
+        },
+        "required": [
+          "event_type",
+          "emitted_at",
+          "payload"
+        ],
+        "title": "EventEnvelope",
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "opaque-token"
+      }
+    }
+  },
+  "paths": {
+    "/api/health": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Health check",
+        "operationId": "healthCheck",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "tags": [
+          "auth"
+        ],
+        "summary": "Validate user credentials",
+        "operationId": "login",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Login succeeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/system/status": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Return current backend, runtime, and model status",
+        "operationId": "getSystemStatus",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Current system status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SystemStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cameras": {
+      "get": {
+        "tags": [
+          "cameras"
+        ],
+        "summary": "List camera configs and runtime state",
+        "operationId": "listCameras",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Camera list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CameraListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cameras/start": {
+      "post": {
+        "tags": [
+          "cameras"
+        ],
+        "summary": "Start or restart a camera source",
+        "operationId": "startCamera",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CameraStartRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Camera accepted for startup",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CameraControlResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Camera source conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/cameras/stop": {
+      "post": {
+        "tags": [
+          "cameras"
+        ],
+        "summary": "Stop a running camera source",
+        "operationId": "stopCamera",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CameraStopRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Camera stopped",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CameraControlResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/logs": {
+      "get": {
+        "tags": [
+          "logs"
+        ],
+        "summary": "Query recognition logs with emotion and attendance fields",
+        "operationId": "queryLogs",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "location",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "start_time",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "end_time",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "attendance_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "default": 1
+            }
+          },
+          {
+            "name": "page_size",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Log list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LogListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/attendance": {
+      "get": {
+        "tags": [
+          "attendance"
+        ],
+        "summary": "Query attendance-facing records and summary inputs",
+        "operationId": "queryAttendance",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "start_time",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "end_time",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Attendance records and summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AttendanceListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/faces": {
+      "get": {
+        "tags": [
+          "faces"
+        ],
+        "summary": "List face library users and sample counts",
+        "operationId": "listFaces",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Face list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FaceLibraryResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/faces/register": {
+      "post": {
+        "tags": [
+          "faces"
+        ],
+        "summary": "Register uploaded face samples",
+        "operationId": "registerFace",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FaceRegisterRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Enrollment request accepted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FaceRegisterResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/faces/{name}": {
+      "delete": {
+        "tags": [
+          "faces"
+        ],
+        "summary": "Delete a user and optionally retrain immediately",
+        "operationId": "deleteFace",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "retrain",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deletion completed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FaceDeleteResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/models/train": {
+      "post": {
+        "tags": [
+          "models"
+        ],
+        "summary": "Rebuild training data and train current face model",
+        "operationId": "trainModel",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Train request finished",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelTrainResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ws/stream/{camera_id}": {
+      "get": {
+        "summary": "WebSocket camera frame stream",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "description": "Connect with ?token=... and receive EventEnvelope messages with event_type=camera.frame.",
+        "responses": {
+          "101": {
+            "description": "Switching Protocols"
+          }
+        }
+      }
+    },
+    "/ws/events": {
+      "get": {
+        "summary": "WebSocket system-wide event stream",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "description": "Connect with ?token=... and receive EventEnvelope messages such as vision.observation.",
+        "responses": {
+          "101": {
+            "description": "Switching Protocols"
+          }
+        }
+      }
+    }
+  },
+  "x-websocket-channels": {
+    "/ws/stream/{camera_id}": {
+      "summary": "Camera stream channel",
+      "server_messages": [
+        {
+          "schema": {
+            "$ref": "#/components/schemas/EventEnvelope"
+          }
+        }
+      ]
+    },
+    "/ws/events": {
+      "summary": "System-wide event channel",
+      "server_messages": [
+        {
+          "schema": {
+            "$ref": "#/components/schemas/EventEnvelope"
+          }
+        }
+      ]
+    }
+  }
+}

@@ -22,3 +22,5 @@ model/*
 
 reports/
 prompt.md
+prompt_new.md
+parallel_task_prompts.md

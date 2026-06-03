@@ -1,0 +1,29 @@
+{
+  "python_path": "D:/Anaconda_envs/envs/FaceReco/python.exe",
+  "backend": {
+    "entry": "parallel_work/task-01-backend-api/main.py",
+    "host": "127.0.0.1",
+    "port": 18080,
+    "startup_timeout_seconds": 120,
+    "health_path": "/api/health"
+  },
+  "frontend": {
+    "workspace": "parallel_work/task-02-frontend-web",
+    "host": "127.0.0.1",
+    "port": 5173,
+    "api_mode": "live"
+  },
+  "legacy": {
+    "entry": "run.py"
+  },
+  "demo": {
+    "recommended_camera_slots": [
+      "2",
+      "1"
+    ],
+    "notes": [
+      "Slot 2 is usually wired to the bundled sample video in the legacy config.",
+      "Slot 1 usually points to the integrated camera and depends on local hardware availability."
+    ]
+  }
+}

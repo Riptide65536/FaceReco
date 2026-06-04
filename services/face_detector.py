@@ -59,6 +59,7 @@ class YOLOFaceDetector(BaseFaceDetector):
         self._base_imgsz = max(160, int(imgsz))
         self.imgsz = self._base_imgsz
         self.device = device or None
+        self._cuda_fallback_warned = False
         self._model = YOLO(str(self.model_path))
 
     def set_runtime_mode(self, mode: str) -> None:
@@ -72,14 +73,22 @@ class YOLOFaceDetector(BaseFaceDetector):
         self.imgsz = self._base_imgsz
 
     def detect(self, frame: "np.ndarray") -> list[FaceDetection]:
-        results = self._model.predict(
-            source=frame,
-            conf=self.conf_threshold,
-            iou=self.iou_threshold,
-            imgsz=self.imgsz,
-            device=self.device,
-            verbose=False,
-        )
+        try:
+            results = self._predict(frame)
+        except Exception as exc:
+            message = str(exc)
+            cuda_device_error = (
+                "Invalid CUDA" in message
+                or "CUDA device" in message
+                or "cuda" in message.lower() and "available" in message.lower()
+            )
+            if not cuda_device_error or str(self.device).lower() == "cpu":
+                raise
+            if not self._cuda_fallback_warned:
+                print(f"YOLO CUDA device unavailable ({self.device}), falling back to CPU: {exc}")
+                self._cuda_fallback_warned = True
+            self.device = "cpu"
+            results = self._predict(frame)
         if not results:
             return []
 
@@ -131,6 +140,16 @@ class YOLOFaceDetector(BaseFaceDetector):
 
         detections.sort(key=lambda item: float(item.score or 0.0), reverse=True)
         return detections
+
+    def _predict(self, frame: "np.ndarray"):
+        return self._model.predict(
+            source=frame,
+            conf=self.conf_threshold,
+            iou=self.iou_threshold,
+            imgsz=self.imgsz,
+            device=self.device,
+            verbose=False,
+        )
 
 
 class InsightFaceDetector(BaseFaceDetector):

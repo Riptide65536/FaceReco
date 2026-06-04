@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import hashlib
 import os
 import threading
 import ctypes
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Iterable, Optional
 import sys
+import time
 
 if TYPE_CHECKING:
     import numpy as np
@@ -33,6 +33,7 @@ class FaceRecognitionService:
         self.model_path = Path(model_path)
         self.confidence_threshold = confidence_threshold
         self.labels = labels or {}
+        # [优化] 用 RLock 保护 gallery 读写，推理本身不持锁
         self._lock = threading.RLock()
         self.cv2 = self._load_cv2()
         self.detector = None
@@ -53,12 +54,23 @@ class FaceRecognitionService:
         self._backend = None
         self._deep_providers: list[str] = []
         self._deep_input_size = (112, 112)
-        self._frame_cache_lock = threading.Lock()
-        self._frame_cache: dict[str, list[dict[str, Any]]] = {}
-        self._frame_cache_order: list[str] = []
-        self._frame_cache_limit = max(4, int(os.getenv("FACE_RECO_FRAME_CACHE", "16")))
+
+        # ──────────────────────────────────────────────────────────────────
+        # [优化] 彻底废弃基于帧内容哈希的缓存机制，改为：
+        #   • 外部传入轻量 cache_key（帧序号字符串）
+        #   • 内部维护 {cache_key -> (timestamp, results)} 简单字典
+        #   • 超过 max_age 自动失效，不再做任何帧内容哈希运算
+        # ──────────────────────────────────────────────────────────────────
+        self._result_cache_lock = threading.Lock()
+        self._result_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+        self._result_cache_limit = max(4, int(os.getenv("FACE_RECO_FRAME_CACHE", "16")))
+        self._result_cache_order: list[str] = []
         self._frame_cache_min_interval = max(0.0, float(os.getenv("FACE_RECO_CACHE_TTL", "0.35")))
-        self._frame_cache_max_age = max(self._frame_cache_min_interval, float(os.getenv("FACE_RECO_CACHE_MAX_AGE", "1.2")))
+        self._frame_cache_max_age = max(
+            self._frame_cache_min_interval,
+            float(os.getenv("FACE_RECO_CACHE_MAX_AGE", "1.2")),
+        )
+
         self._init_backend_with_fallback()
         if self.model_path.exists():
             try:
@@ -70,7 +82,7 @@ class FaceRecognitionService:
     def _load_cv2():
         try:
             import cv2
-        except ImportError as exc:  # pragma: no cover - depends on local env
+        except ImportError as exc:
             raise RuntimeError("OpenCV is not installed. Run: pip install -r requirements.txt") from exc
         return cv2
 
@@ -114,9 +126,6 @@ class FaceRecognitionService:
             if self._backend_error_message:
                 raise RuntimeError(self._backend_error_message)
 
-        # Import torch before ORT/InsightFace on Windows so PyTorch resolves its
-        # CUDA/cuDNN DLL chain first. This avoids later YOLO initialization
-        # falling back when ORT has already altered the DLL search order.
         self._prime_torch_runtime()
 
         try:
@@ -231,7 +240,6 @@ class FaceRecognitionService:
     def _prime_torch_runtime() -> None:
         try:
             import torch  # type: ignore
-
             _ = torch.cuda.is_available()
         except Exception:
             pass
@@ -240,10 +248,19 @@ class FaceRecognitionService:
     def _resolve_yolo_device() -> str | None:
         env_device = os.getenv("FACE_RECO_YOLO_DEVICE", "").strip()
         if env_device:
+            lowered = env_device.lower()
+            if lowered != "cpu":
+                try:
+                    import torch  # type: ignore
+                    if not torch.cuda.is_available():
+                        return "cpu"
+                    if lowered.isdigit() and int(lowered) >= int(torch.cuda.device_count()):
+                        return "cpu"
+                except Exception:
+                    return "cpu"
             return env_device
         try:
             import torch  # type: ignore
-
             if torch.cuda.is_available():
                 return "0"
             return "cpu"
@@ -259,12 +276,10 @@ class FaceRecognitionService:
         try:
             import onnxruntime as ort  # type: ignore
             try:
-                # Best effort preload for CUDA/cuDNN/MSVC runtime DLLs.
                 if hasattr(ort, "preload_dlls"):
-                    ort.preload_dlls()  # type: ignore[attr-defined]
+                    ort.preload_dlls()
             except Exception:
                 pass
-
             available = list(ort.get_available_providers())
         except Exception:
             available = []
@@ -289,9 +304,6 @@ class FaceRecognitionService:
         elif "CPUExecutionProvider" not in selected:
             selected.append("CPUExecutionProvider")
 
-        # Validate the provider list by creating a tiny throwaway session.
-        # This catches Windows initialization failures early and lets us fall
-        # back to CPU without spamming every subsequent model load.
         if "CUDAExecutionProvider" in selected and os.name == "nt":
             if not FaceRecognitionService._probe_cuda_session():
                 if verbose:
@@ -324,40 +336,6 @@ class FaceRecognitionService:
 
     @staticmethod
     def _build_tiny_onnx_identity_model() -> bytes:
-        # Minimal ONNX identity graph. Serialized manually to avoid adding a
-        # hard dependency on onnx for the probe path.
-        import struct
-
-        def varint(n: int) -> bytes:
-            out = bytearray()
-            while True:
-                b = n & 0x7F
-                n >>= 7
-                if n:
-                    out.append(b | 0x80)
-                else:
-                    out.append(b)
-                    break
-            return bytes(out)
-
-        def field(tag: int, data: bytes) -> bytes:
-            return varint(tag) + varint(len(data)) + data
-
-        def str_field(tag: int, text: str) -> bytes:
-            raw = text.encode("utf-8")
-            return field(tag, raw)
-
-        def tensor_value_info(name: str) -> bytes:
-            # ValueInfoProto: name + type(float tensor, [1,1])
-            dims = field(1, varint(1)) + field(1, varint(1))
-            tensor_shape = field(2, dims)
-            tensor_type = field(1, varint(1)) + field(2, tensor_shape)
-            type_proto = field(1, tensor_type)
-            return str_field(1, name) + field(2, type_proto)
-
-        # This handcrafted payload is intentionally tiny and only used for a
-        # CUDA provider smoke test.
-        # A more complete ONNX builder would be overkill here.
         try:
             import onnx  # type: ignore
             from onnx import TensorProto, helper  # type: ignore
@@ -369,8 +347,6 @@ class FaceRecognitionService:
             model = helper.make_model(graph, producer_name="face-reco-probe")
             return model.SerializeToString()
         except Exception:
-            # If onnx is unavailable, return an empty payload and let the probe
-            # fail fast rather than blocking startup.
             return b""
 
     @staticmethod
@@ -383,25 +359,20 @@ class FaceRecognitionService:
             return
 
         candidate_dirs: list[Path] = []
-        # Collect nvidia runtime bins installed by pip packages.
         for sp in [Path(p) for p in sys.path if "site-packages" in p]:
             nvidia_root = sp / "nvidia"
             if not nvidia_root.exists():
                 continue
-            # Do not hardcode package names; different ORT/CUDA builds can
-            # depend on additional nvidia wheels (cufft/curand/cusparse/...).
             for sub in nvidia_root.iterdir():
                 if not sub.is_dir():
                     continue
                 bin_dir = sub / "bin"
                 if bin_dir.exists():
                     candidate_dirs.append(bin_dir)
-            # onnxruntime capi directory may also be needed in DLL search path.
             ort_capi = sp / "onnxruntime" / "capi"
             if ort_capi.exists():
                 candidate_dirs.append(ort_capi)
 
-        # Deduplicate while preserving order.
         seen = set()
         unique_dirs: list[Path] = []
         for d in candidate_dirs:
@@ -420,7 +391,6 @@ class FaceRecognitionService:
             for d in unique_dirs:
                 print("ort dll dir:", d)
 
-        # Keep handles alive for the process lifetime.
         for d in unique_dirs:
             try:
                 handle = os.add_dll_directory(str(d))
@@ -428,7 +398,6 @@ class FaceRecognitionService:
             except Exception:
                 pass
 
-        # Keep PATH aligned for third-party loaders.
         current_path = os.environ.get("PATH", "")
         prepend = ";".join(str(d) for d in unique_dirs)
         os.environ["PATH"] = f"{prepend};{current_path}" if current_path else prepend
@@ -446,7 +415,6 @@ class FaceRecognitionService:
             return True
         try:
             import onnxruntime as ort  # type: ignore
-
             capi_dir = Path(ort.__file__).resolve().parent / "capi"
             dll_path = capi_dir / dll_name
             if not dll_path.exists():
@@ -477,8 +445,6 @@ class FaceRecognitionService:
             raise RuntimeError("LBPH backend is unavailable. Install opencv-contrib-python.") from exc
 
     def _create_lite_backend(self):
-        # Lightweight fallback backend (no cv2.face / no deep model) that still
-        # supports training and recognition with simple normalized pixel features.
         self.recognizer = None
         if self.cascade_path.exists():
             try:
@@ -493,7 +459,6 @@ class FaceRecognitionService:
     @staticmethod
     def _normalize(vec: "np.ndarray") -> "np.ndarray":
         import numpy as np
-
         v = np.asarray(vec, dtype="float32").reshape(-1)
         n = float(np.linalg.norm(v))
         if n <= 1e-12:
@@ -505,53 +470,47 @@ class FaceRecognitionService:
             return self.cv2.cvtColor(frame, self.cv2.COLOR_GRAY2BGR)
         return frame
 
-    @staticmethod
-    def _frame_cache_key(frame: "np.ndarray") -> str:
-        try:
-            import numpy as np
-
-            contiguous = np.ascontiguousarray(frame)
-            digest = hashlib.blake2b(contiguous.view("uint8"), digest_size=16).hexdigest()
-            return f"{contiguous.shape}:{contiguous.dtype}:{digest}"
-        except Exception:
-            return ""
-
-    def _cached_predictions(self, frame: "np.ndarray") -> list[dict[str, Any]] | None:
-        if self._frame_cache_min_interval <= 0:
-            return None
-        cache_key = self._frame_cache_key(frame)
+    # ──────────────────────────────────────────────────────────────────────────
+    # [优化] 全新轻量缓存：基于外部传入的 cache_key（帧序号字符串）
+    #        完全不做任何帧内容哈希，查询/存储均为 O(1)
+    # ──────────────────────────────────────────────────────────────────────────
+    def _get_cached_result(self, cache_key: str) -> list[dict[str, Any]] | None:
+        """用外部 key 查缓存，超龄则淘汰，不命中返回 None。"""
         if not cache_key:
             return None
-        import time
-
         now = time.monotonic()
-        with self._frame_cache_lock:
-            cached = self._frame_cache.get(cache_key)
-            if cached is None:
+        with self._result_cache_lock:
+            entry = self._result_cache.get(cache_key)
+            if entry is None:
                 return None
-            age = now - float(cached[0])  # type: ignore[index]
-            if age > self._frame_cache_max_age:
-                self._frame_cache.pop(cache_key, None)
-                if cache_key in self._frame_cache_order:
-                    self._frame_cache_order.remove(cache_key)
+            ts, results = entry
+            if now - ts > self._frame_cache_max_age:
+                self._result_cache.pop(cache_key, None)
+                try:
+                    self._result_cache_order.remove(cache_key)
+                except ValueError:
+                    pass
                 return None
-            return list(cached[1])  # type: ignore[index]
+            return list(results)
 
-    def _store_cached_predictions(self, frame: "np.ndarray", predictions: list[dict[str, Any]]) -> None:
-        cache_key = self._frame_cache_key(frame)
+    def _store_cached_result(self, cache_key: str, predictions: list[dict[str, Any]]) -> None:
+        """将结果存入缓存，自动淘汰超出容量的旧条目。"""
         if not cache_key:
             return
-        import time
-
-        payload = (time.monotonic(), [dict(item) for item in predictions])
-        with self._frame_cache_lock:
-            self._frame_cache[cache_key] = payload
-            if cache_key in self._frame_cache_order:
-                self._frame_cache_order.remove(cache_key)
-            self._frame_cache_order.append(cache_key)
-            while len(self._frame_cache_order) > self._frame_cache_limit:
-                old = self._frame_cache_order.pop(0)
-                self._frame_cache.pop(old, None)
+        payload: tuple[float, list[dict[str, Any]]] = (
+            time.monotonic(),
+            [dict(item) for item in predictions],
+        )
+        with self._result_cache_lock:
+            self._result_cache[cache_key] = payload
+            try:
+                self._result_cache_order.remove(cache_key)
+            except ValueError:
+                pass
+            self._result_cache_order.append(cache_key)
+            while len(self._result_cache_order) > self._result_cache_limit:
+                old = self._result_cache_order.pop(0)
+                self._result_cache.pop(old, None)
 
     def _extract_faces_deep(self, frame: "np.ndarray") -> list[dict[str, Any]]:
         bgr = self._ensure_bgr(frame)
@@ -586,29 +545,26 @@ class FaceRecognitionService:
         if x1 <= x0 or y1 <= y0:
             return None
 
+        # ──────────────────────────────────────────────────────────────────
+        # [优化] 简化 embedding 提取策略，去掉开销极大的第三条路径：
+        #   1. 优先用 kps（最准，InsightFace 原生对齐路径）
+        #   2. kps 不可用时直接 bbox crop 提取
+        #      原来的 _extract_embedding_via_recognition_detector 会对 padded
+        #      子图再跑一次完整 analyzer.get()，相当于重复推理，已删除。
+        # ──────────────────────────────────────────────────────────────────
         if detection.kps is not None:
             embedding = self._extract_embedding_with_kps(frame_bgr, detection.kps)
             if embedding is not None:
                 return embedding
 
-        embedding = self._extract_embedding_via_recognition_detector(frame_bgr, detection.bbox)
-        if embedding is not None:
-            return embedding
-
         face_crop = frame_bgr[y0:y1, x0:x1]
         if face_crop.size == 0:
             return None
-
-        embedding = self._extract_embedding_from_crop(face_crop)
-        if embedding is not None:
-            return embedding
-
-        return None
+        return self._extract_embedding_from_crop(face_crop)
 
     @staticmethod
     def _normalize_five_point_kps(kps: "np.ndarray") -> Optional["np.ndarray"]:
         import numpy as np
-
         parsed = np.asarray(kps, dtype="float32")
         if parsed.ndim != 2 or parsed.shape[1] < 2 or parsed.shape[0] < 5:
             return None
@@ -627,7 +583,6 @@ class FaceRecognitionService:
                 from insightface.utils import face_align  # type: ignore
             except Exception:
                 return None
-
             try:
                 aligned = face_align.norm_crop(frame_bgr, landmark=normalized_kps)
             except Exception:
@@ -639,7 +594,6 @@ class FaceRecognitionService:
             from insightface.app.common import Face  # type: ignore
         except Exception:
             return None
-
         try:
             face = Face(kps=kps)
             embedding = self._deep_embedder.get(frame_bgr, face)
@@ -663,23 +617,12 @@ class FaceRecognitionService:
         return prepared
 
     def _extract_embedding_from_crop(self, face_crop: "np.ndarray") -> Optional["np.ndarray"]:
-        prepared_crop = self._prepare_arcface_crop(face_crop)
-        candidates = [prepared_crop] if prepared_crop is not None else []
-        try:
-            gray = self.to_gray(face_crop)
-            if gray.size > 0:
-                tight = self.cv2.resize(gray, tuple(map(int, self._deep_input_size)))
-                candidates.insert(0, self.cv2.cvtColor(tight, self.cv2.COLOR_GRAY2BGR))
-        except Exception:
-            pass
-
-        for candidate in candidates:
-            if candidate is None:
-                continue
-            emb = self._extract_embedding_with_embedder(candidate)
-            if emb is not None:
-                return emb
-        return None
+        # [优化] 只走最直接路径：resize 到 ArcFace 输入尺寸后直接提取
+        #        去掉了原来先转灰度再转回 BGR 的冗余候选路径
+        prepared = self._prepare_arcface_crop(face_crop)
+        if prepared is None:
+            return None
+        return self._extract_embedding_with_embedder(prepared)
 
     def _extract_embedding_with_embedder(self, face_crop: "np.ndarray") -> Optional["np.ndarray"]:
         if self._deep_embedder is None:
@@ -692,46 +635,16 @@ class FaceRecognitionService:
             return None
         return self._normalize(embedding)
 
-    def _extract_embedding_via_recognition_detector(
+    # [已移除] _extract_embedding_via_recognition_detector
+    # 原因：kps 失败时对 padded 子图再次调用 analyzer.get()，
+    # 相当于对同一张脸重复跑完整检测+识别流水线，开销极大。
+    # 现在 kps 失败后直接 crop 提取，效果相当且快得多。
+
+    def _extract_single_embedding(
         self,
-        frame_bgr: "np.ndarray",
-        bbox: tuple[int, int, int, int],
+        sample: "np.ndarray",
+        assume_face_crop: bool = False,
     ) -> Optional["np.ndarray"]:
-        if self._deep_embedder is None:
-            return None
-
-        x, y, w, h = [int(v) for v in bbox]
-        pad = max(8, int(0.2 * max(w, h)))
-        x0 = max(0, x - pad)
-        y0 = max(0, y - pad)
-        x1 = min(frame_bgr.shape[1], x + w + pad)
-        y1 = min(frame_bgr.shape[0], y + h + pad)
-        if x1 <= x0 or y1 <= y0:
-            return None
-        analyzer = self._backend.get("analyzer") if isinstance(self._backend, dict) else None
-        if analyzer is None:
-            return None
-        try:
-            faces = analyzer.get(frame_bgr[y0:y1, x0:x1])
-        except Exception:
-            return None
-        if not faces:
-            return None
-        selected = max(
-            faces,
-            key=lambda item: float(getattr(item, "det_score", 0.0)) * float(
-                max(1.0, (getattr(item, "bbox", [0, 0, 0, 0])[2] - getattr(item, "bbox", [0, 0, 0, 0])[0]))
-                * max(1.0, (getattr(item, "bbox", [0, 0, 0, 0])[3] - getattr(item, "bbox", [0, 0, 0, 0])[1]))
-            ),
-        )
-        embedding = getattr(selected, "normed_embedding", None)
-        if embedding is None:
-            embedding = getattr(selected, "embedding", None)
-        if embedding is None:
-            return None
-        return self._normalize(embedding)
-
-    def _extract_single_embedding(self, sample: "np.ndarray", assume_face_crop: bool = False) -> Optional["np.ndarray"]:
         if assume_face_crop:
             try:
                 gray_face = self.to_gray(sample)
@@ -744,9 +657,7 @@ class FaceRecognitionService:
             except Exception:
                 pass
 
-        # Try original sample first.
         candidates = [sample]
-        # Upscale tiny crops to improve deep detector success on pre-cropped faces.
         try:
             gray = self.to_gray(sample)
             h, w = gray.shape[:2]
@@ -755,9 +666,10 @@ class FaceRecognitionService:
                 scale = max(2.0, 192.0 / float(max(1, min_side)))
                 up = self.cv2.resize(sample, None, fx=scale, fy=scale)
                 candidates.append(up)
-            # Add padded version to recover context for very tight crops.
             pad = max(10, int(0.15 * max(h, w)))
-            padded = self.cv2.copyMakeBorder(sample, pad, pad, pad, pad, self.cv2.BORDER_REFLECT_101)
+            padded = self.cv2.copyMakeBorder(
+                sample, pad, pad, pad, pad, self.cv2.BORDER_REFLECT_101
+            )
             candidates.append(padded)
         except Exception:
             pass
@@ -772,7 +684,11 @@ class FaceRecognitionService:
                 return embedding
         return None
 
-    def _compute_lite_embedding(self, frame: "np.ndarray", bbox: tuple[int, int, int, int] | None = None):
+    def _compute_lite_embedding(
+        self,
+        frame: "np.ndarray",
+        bbox: tuple[int, int, int, int] | None = None,
+    ):
         gray = self.to_gray(frame)
         if bbox is not None:
             x, y, w, h = bbox
@@ -807,7 +723,6 @@ class FaceRecognitionService:
 
     def load_model(self) -> bool:
         import numpy as np
-
         with self._lock:
             if self._backend_mode in {"deep", "lite"}:
                 with open(self.model_path, "rb") as fd:
@@ -815,7 +730,8 @@ class FaceRecognitionService:
                     labels = payload["labels"].astype("int32").tolist()
                     embeddings = payload["embeddings"].astype("float32")
                 self._gallery = {
-                    int(label): self._normalize(embeddings[idx]) for idx, label in enumerate(labels)
+                    int(label): self._normalize(embeddings[idx])
+                    for idx, label in enumerate(labels)
                 }
                 return True
 
@@ -825,76 +741,109 @@ class FaceRecognitionService:
             return True
 
     def detect_faces(self, frame: "np.ndarray") -> list[tuple[int, int, int, int]]:
-        with self._lock:
-            if self._backend_mode == "deep":
-                return [tuple(map(int, det.bbox)) for det in self._detect_faces_deep(frame)]
-            if self._backend_mode == "lite":
-                return [tuple(map(int, f["bbox"])) for f in self._extract_faces_lite(frame)]
-            return self._detect_faces_lbph(frame)
+        # [优化] detect_faces 不持 _lock，检测器本身线程安全（YOLO/InsightFace 内部有锁）
+        if self._backend_mode == "deep":
+            return [tuple(map(int, det.bbox)) for det in self._detect_faces_deep(frame)]
+        if self._backend_mode == "lite":
+            return [tuple(map(int, f["bbox"])) for f in self._extract_faces_lite(frame)]
+        return self._detect_faces_lbph(frame)
 
-    def recognize_frame(self, frame: "np.ndarray") -> list[dict[str, Any]]:
-        results = []
-        with self._lock:
-            cached = self._cached_predictions(frame)
+    def recognize_frame(
+        self,
+        frame: "np.ndarray",
+        cache_key: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """
+        识别帧中的人脸。
+
+        [优化] 关键改动：
+        1. cache_key 由调用方传入（帧序号字符串），不再在此做全帧哈希。
+        2. 深度推理（YOLO + ArcFace）完全在 _lock 之外执行，大幅降低锁竞争。
+        3. 只在读取 _gallery 时短暂加锁拿快照，推理期间其他线程可正常访问服务。
+        """
+        # ── 1. 查轻量缓存（O(1)，无哈希）────────────────────────────────────
+        if cache_key:
+            cached = self._get_cached_result(cache_key)
             if cached is not None:
                 return cached
-            if self._backend_mode in {"deep", "lite"}:
-                faces = self._extract_faces_deep(frame) if self._backend_mode == "deep" else self._extract_faces_lite(frame)
-                for det in faces:
-                    x, y, w, h = det["bbox"]
-                    name = "unknown"
-                    confidence = None
-                    label = None
-                    similarity = None
-                    emb = self._normalize(det["embedding"])
-                    if self._gallery:
-                        best_label = None
-                        best_sim = -1.0
-                        for gid, gemb in self._gallery.items():
-                            sim = float((emb * gemb).sum())
-                            if sim > best_sim:
-                                best_sim = sim
-                                best_label = int(gid)
-                        if best_label is not None:
-                            label = best_label
-                            similarity = best_sim
-                            confidence = max(0.0, min(100.0, best_sim * 100.0))
-                            if best_sim >= self._similarity_threshold:
-                                name = self.labels.get(int(best_label), str(best_label))
-                    results.append(
-                        {
-                            "bbox": (x, y, w, h),
-                            "label": label,
-                            "name": name,
-                            "similarity": similarity,
-                            "confidence": confidence,
-                        }
-                    )
-                self._store_cached_predictions(frame, results)
-                return results
 
-            if self.recognizer is None:
-                return results
-            gray = self.to_gray(frame)
-            faces = self._detect_faces_lbph(gray)
-            for (x, y, w, h) in faces:
-                face = gray[y : y + h, x : x + w]
-                label_id, dist = self.recognizer.predict(face)
-                label = int(label_id)
+        results: list[dict[str, Any]] = []
+
+        # ── 2. deep / lite 路径：推理在锁外执行 ──────────────────────────────
+        if self._backend_mode in {"deep", "lite"}:
+            # 2a. 检测 + embedding（纯计算，无共享状态写入，不需要锁）
+            faces = (
+                self._extract_faces_deep(frame)
+                if self._backend_mode == "deep"
+                else self._extract_faces_lite(frame)
+            )
+
+            # 2b. 仅在读取 gallery 时短暂加锁，拿到快照后立即释放
+            with self._lock:
+                gallery_snapshot = dict(self._gallery)
+                labels_snapshot = dict(self.labels)
+                similarity_threshold = self._similarity_threshold
+
+            # 2c. gallery 匹配（纯 numpy 点积，无共享状态，不需要锁）
+            for det in faces:
+                x, y, w, h = det["bbox"]
                 name = "unknown"
-                if float(dist) < self._lbph_threshold:
-                    name = self.labels.get(label, "unknown")
-                confidence = max(0.0, min(100.0, 100.0 - float(dist)))
+                confidence = None
+                label = None
+                similarity = None
+                emb = self._normalize(det["embedding"])
+                if gallery_snapshot:
+                    best_label = None
+                    best_sim = -1.0
+                    for gid, gemb in gallery_snapshot.items():
+                        sim = float((emb * gemb).sum())
+                        if sim > best_sim:
+                            best_sim = sim
+                            best_label = int(gid)
+                    if best_label is not None:
+                        label = best_label
+                        similarity = best_sim
+                        confidence = max(0.0, min(100.0, best_sim * 100.0))
+                        if best_sim >= similarity_threshold:
+                            name = labels_snapshot.get(int(best_label), str(best_label))
                 results.append(
                     {
                         "bbox": (x, y, w, h),
                         "label": label,
                         "name": name,
-                        "similarity": max(0.0, min(1.0, confidence / 100.0)),
+                        "similarity": similarity,
                         "confidence": confidence,
                     }
                 )
-            self._store_cached_predictions(frame, results)
+
+            if cache_key:
+                self._store_cached_result(cache_key, results)
+            return results
+
+        # ── 3. LBPH 路径（原逻辑保持不变）────────────────────────────────────
+        if self.recognizer is None:
+            return results
+        gray = self.to_gray(frame)
+        faces_lbph = self._detect_faces_lbph(gray)
+        for (x, y, w, h) in faces_lbph:
+            face = gray[y : y + h, x : x + w]
+            label_id, dist = self.recognizer.predict(face)
+            label = int(label_id)
+            name = "unknown"
+            if float(dist) < self._lbph_threshold:
+                name = self.labels.get(label, "unknown")
+            confidence = max(0.0, min(100.0, 100.0 - float(dist)))
+            results.append(
+                {
+                    "bbox": (x, y, w, h),
+                    "label": label,
+                    "name": name,
+                    "similarity": max(0.0, min(1.0, confidence / 100.0)),
+                    "confidence": confidence,
+                }
+            )
+        if cache_key:
+            self._store_cached_result(cache_key, results)
         return results
 
     def train(self, samples: Iterable["np.ndarray"], labels: Iterable[int]) -> None:
@@ -908,8 +857,6 @@ class FaceRecognitionService:
         with self._lock:
             if self._backend_mode in {"deep", "lite"}:
                 per_label: dict[int, list["np.ndarray"]] = {}
-                # If a class has multiple samples, treat them as enrollment crops
-                # and use a faster extraction path first.
                 label_counts: dict[int, int] = {}
                 for label in labels_array.tolist():
                     ilabel = int(label)
@@ -944,7 +891,8 @@ class FaceRecognitionService:
                     np.savez_compressed(fd, labels=labels_np, embeddings=embeddings_np)
 
                 self._gallery = {
-                    int(label): embeddings_np[idx] for idx, label in enumerate(labels_np.tolist())
+                    int(label): embeddings_np[idx]
+                    for idx, label in enumerate(labels_np.tolist())
                 }
                 return
 

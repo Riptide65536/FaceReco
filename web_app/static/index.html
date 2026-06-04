@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FaceReco 人脸识别监控台</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell" id="appShell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">FR</div>
+          <div>
+            <strong>FaceReco</strong>
+            <span>人脸识别监控台</span>
+          </div>
+        </div>
+
+        <nav class="nav-tabs" aria-label="主导航">
+          <button class="nav-tab active" data-view="monitor">监控</button>
+          <button class="nav-tab" data-view="cameras">摄像头</button>
+          <button class="nav-tab" data-view="faces">人脸库</button>
+          <button class="nav-tab" data-view="logs">日志</button>
+        </nav>
+
+        <section class="side-panel">
+          <div class="panel-title">运行状态</div>
+          <div class="status-row"><span>登录状态</span><strong id="loginState">未登录</strong></div>
+          <div class="status-row"><span>识别后端</span><strong id="backendMode">初始化中</strong></div>
+          <div class="status-row"><span>模型状态</span><strong id="modelState">最新</strong></div>
+          <div class="status-row"><span>已登记人员</span><strong id="userCount">0</strong></div>
+          <div class="status-row"><span>活跃画面</span><strong id="activeCount">0 / 4</strong></div>
+        </section>
+
+        <section class="side-panel">
+          <div class="panel-title">登录</div>
+          <label class="field">
+            <span>账号</span>
+            <input id="accountInput" autocomplete="username" placeholder="admin" />
+          </label>
+          <label class="field">
+            <span>密码</span>
+            <input id="passwordInput" type="password" autocomplete="current-password" placeholder="password" />
+          </label>
+          <div class="button-row">
+            <button class="primary" id="loginBtn">登录</button>
+            <button id="registerToggleBtn">注册</button>
+          </div>
+          <div class="register-box hidden" id="registerBox">
+            <input id="registerAccount" placeholder="新账号" />
+            <input id="registerPassword" type="password" placeholder="新密码" />
+            <input id="registerAdminPassword" type="password" placeholder="管理员密码" />
+            <button id="registerBtn">确认注册</button>
+          </div>
+        </section>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <h1 id="viewTitle">实时监控</h1>
+            <p id="viewSubtitle">四路视频、人脸检测、人脸识别、情绪识别与考勤记录</p>
+          </div>
+          <div class="top-actions">
+            <select id="runtimeMode" aria-label="识别策略">
+              <option value="realtime">实时优先</option>
+              <option value="balanced">平衡模式</option>
+              <option value="accurate">高精度</option>
+            </select>
+            <button id="fpsToggle">显示 FPS</button>
+            <button class="primary" id="startAllBtn">开启全部</button>
+            <button class="danger" id="stopAllBtn">关闭全部</button>
+          </div>
+        </header>
+
+        <section class="view active" id="monitorView">
+          <div class="toolbar">
+            <div class="custom-signin">
+              <span id="signinState">自定义签到：未开启</span>
+              <input id="signinName" placeholder="签到名称" />
+              <button id="signinBtn">开始签到</button>
+            </div>
+            <div class="toolbar-spacer"></div>
+            <button id="refreshBtn">刷新状态</button>
+          </div>
+          <div class="monitor-grid" id="monitorGrid"></div>
+        </section>
+
+        <section class="view" id="camerasView">
+          <div class="config-grid" id="cameraConfig"></div>
+          <div class="bottom-actions">
+            <button id="saveConfigBtn">保存配置</button>
+            <button class="primary" id="applyConfigBtn">立刻应用</button>
+          </div>
+        </section>
+
+        <section class="view" id="facesView">
+          <div class="face-layout">
+            <div class="enroll-preview">
+              <div class="enroll-camera">
+                <img id="enrollPreview" alt="录入预览" />
+                <div class="video-empty" id="enrollEmpty">录入预览将在采集时启用</div>
+              </div>
+              <div class="button-row">
+                <button class="primary" id="captureBtn">拍摄</button>
+                <button id="trainBtn">更新模型</button>
+                <button class="danger" id="resetModelBtn">重置模型</button>
+                <button class="danger ghost" id="deleteFaceBtn">删除人脸</button>
+              </div>
+            </div>
+            <aside class="face-panel">
+              <img src="/assets/attachment/avatar.png" alt="" class="avatar" />
+              <label class="field">
+                <span>录入姓名</span>
+                <input id="faceName" placeholder="请输入您的名字" />
+              </label>
+              <label class="field">
+                <span>录入视频源</span>
+                <input id="enrollSource" placeholder="默认 0" />
+              </label>
+              <div class="progress"><div id="captureProgress"></div></div>
+              <div class="status-row"><span>采集样本</span><strong id="sampleCount">0 / 50</strong></div>
+              <div class="status-row"><span>采集状态</span><strong id="enrollStatus">空闲</strong></div>
+              <select id="userSelect"></select>
+            </aside>
+          </div>
+        </section>
+
+        <section class="view" id="logsView">
+          <div class="log-filters">
+            <select id="filterPerson"><option>任何人员</option></select>
+            <select id="filterPlace"><option>任何地点</option></select>
+            <input id="startTime" type="datetime-local" />
+            <input id="endTime" type="datetime-local" />
+            <select id="filterType"><option>任何类型</option></select>
+            <select id="filterStatus">
+              <option>任何状态</option>
+              <option>正常</option>
+              <option>迟到</option>
+              <option>早退</option>
+              <option>缺勤</option>
+              <option>已记录</option>
+              <option>异常</option>
+            </select>
+            <button class="primary" id="queryLogBtn">查询</button>
+          </div>
+          <div class="log-actions">
+            <button class="danger ghost" id="clearLogBtn">清空数据库</button>
+            <button id="absenceBtn">当日缺勤</button>
+            <button id="summaryBtn">考勤汇总</button>
+            <button id="exportBtn">导出报表</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>姓名</th>
+                  <th>地点</th>
+                  <th>时间</th>
+                  <th>情绪</th>
+                  <th>考勤类型</th>
+                  <th>状态</th>
+                </tr>
+              </thead>
+              <tbody id="logBody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <div class="login-guard" id="loginGuard">
+          <div>
+            <strong>请先登录</strong>
+            <span>登录后才能开启视频、配置摄像头、录入人脸和查看考勤日志。</span>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

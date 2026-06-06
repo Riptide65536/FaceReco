@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FaceReco 人脸识别监控台</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark">FR</div>
+          <div>
+            <strong>FaceReco</strong>
+            <span>人脸识别监控台</span>
+          </div>
+        </div>
+
+        <nav class="nav-tabs" aria-label="主导航">
+          <button class="nav-tab active" data-view="monitor">监控</button>
+          <button class="nav-tab" data-view="cameras">摄像头</button>
+          <button class="nav-tab" data-view="faces">人脸库</button>
+          <button class="nav-tab" data-view="logs">日志</button>
+        </nav>
+
+        <section class="side-panel">
+          <div class="panel-title">运行状态</div>
+          <div class="status-row">
+            <span>识别后端</span>
+            <strong id="backendMode">初始化中</strong>
+          </div>
+          <div class="status-row">
+            <span>模型状态</span>
+            <strong id="modelState">最新</strong>
+          </div>
+          <div class="status-row">
+            <span>已登记人员</span>
+            <strong id="userCount">0</strong>
+          </div>
+          <div class="status-row">
+            <span>活跃画面</span>
+            <strong id="activeCount">0 / 4</strong>
+          </div>
+        </section>
+
+        <section class="side-panel">
+          <div class="panel-title">登录</div>
+          <label class="field">
+            <span>账号</span>
+            <input id="accountInput" autocomplete="username" placeholder="admin" />
+          </label>
+          <label class="field">
+            <span>密码</span>
+            <input id="passwordInput" type="password" autocomplete="current-password" placeholder="password" />
+          </label>
+          <div class="button-row">
+            <button class="primary" id="loginBtn">登录</button>
+            <button id="registerBtn">注册</button>
+          </div>
+        </section>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <h1 id="viewTitle">实时监控</h1>
+            <p id="viewSubtitle">四路视频、人脸检测、人脸识别、情绪识别与考勤记录</p>
+          </div>
+          <div class="top-actions">
+            <select id="runtimeMode" aria-label="识别策略">
+              <option value="realtime">实时优先</option>
+              <option value="balanced" selected>平衡模式</option>
+              <option value="accurate">高精度</option>
+            </select>
+            <button id="fpsToggle">显示 FPS</button>
+            <button class="primary" id="startAllBtn">开启测试视频</button>
+            <button class="danger" id="stopAllBtn">关闭全部</button>
+          </div>
+        </header>
+
+        <section class="view active" id="monitorView">
+          <div class="toolbar">
+            <div class="custom-signin">
+              <span id="signinState">自定义签到：未开启</span>
+              <input id="signinName" placeholder="签到名称" />
+              <button id="signinBtn">开始签到</button>
+            </div>
+            <div class="toolbar-spacer"></div>
+            <button id="addCameraBtn">添加摄像头</button>
+            <button id="delCameraBtn">删除摄像头</button>
+          </div>
+
+          <div class="monitor-grid" id="monitorGrid">
+            <article class="video-tile" data-slot="1">
+              <div class="tile-head"><strong>win1</strong><span>人脸识别模式</span></div>
+              <canvas width="640" height="360"></canvas>
+              <div class="tile-foot"><span>实验室入口</span><span class="stream-state">无信号</span></div>
+            </article>
+            <article class="video-tile" data-slot="2">
+              <div class="tile-head"><strong>win2</strong><span>人脸检测模式</span></div>
+              <canvas width="640" height="360"></canvas>
+              <div class="tile-foot"><span>走廊</span><span class="stream-state">无信号</span></div>
+            </article>
+            <article class="video-tile" data-slot="3">
+              <div class="tile-head"><strong>win3</strong><span>纯显示模式</span></div>
+              <canvas width="640" height="360"></canvas>
+              <div class="tile-foot"><span>会议室</span><span class="stream-state">无信号</span></div>
+            </article>
+            <article class="video-tile" data-slot="4">
+              <div class="tile-head"><strong>win4</strong><span>人脸识别模式</span></div>
+              <canvas width="640" height="360"></canvas>
+              <div class="tile-foot"><span>备用源</span><span class="stream-state">无信号</span></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="view" id="camerasView">
+          <div class="config-grid" id="cameraConfig"></div>
+          <div class="bottom-actions">
+            <button id="saveConfigBtn">保存配置</button>
+            <button class="primary" id="applyConfigBtn">立刻应用</button>
+          </div>
+        </section>
+
+        <section class="view" id="facesView">
+          <div class="face-layout">
+            <div class="enroll-preview">
+              <canvas id="enrollCanvas" width="720" height="405"></canvas>
+              <div class="button-row">
+                <button class="primary" id="captureBtn">拍摄</button>
+                <button id="trainBtn">更新模型</button>
+                <button class="danger" id="resetModelBtn">重置模型</button>
+                <button class="danger ghost" id="deleteFaceBtn">删除人脸</button>
+              </div>
+            </div>
+            <aside class="face-panel">
+              <img src="../assets/attachment/avatar.png" alt="" />
+              <label class="field">
+                <span>录入姓名</span>
+                <input id="faceName" placeholder="请输入您的名字" />
+              </label>
+              <div class="progress">
+                <div id="captureProgress"></div>
+              </div>
+              <div class="status-row"><span>采集样本</span><strong id="sampleCount">0 / 20</strong></div>
+              <div class="status-row"><span>训练样本</span><strong id="trainingCount">0</strong></div>
+              <div class="status-row"><span>模型待更新</span><strong id="pendingFlag">否</strong></div>
+            </aside>
+          </div>
+        </section>
+
+        <section class="view" id="logsView">
+          <div class="log-filters">
+            <select id="filterPerson"><option>任何人员</option></select>
+            <select id="filterPlace"><option>任何地点</option></select>
+            <input id="startTime" type="datetime-local" />
+            <input id="endTime" type="datetime-local" />
+            <select id="filterType">
+              <option>任何类型</option>
+              <option>上班打卡</option>
+              <option>下班打卡</option>
+              <option>外出登记</option>
+              <option>重复识别</option>
+              <option>未识别</option>
+            </select>
+            <select id="filterStatus">
+              <option>任何状态</option>
+              <option>正常</option>
+              <option>迟到</option>
+              <option>早退</option>
+              <option>缺勤</option>
+              <option>已记录</option>
+              <option>异常</option>
+            </select>
+            <button class="primary" id="queryLogBtn">查询</button>
+          </div>
+          <div class="log-actions">
+            <button class="danger ghost" id="clearLogBtn">清空数据库</button>
+            <button id="absenceBtn">当日缺勤</button>
+            <button id="summaryBtn">考勤汇总</button>
+            <button id="exportBtn">导出报表</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>姓名</th>
+                  <th>地点</th>
+                  <th>时间</th>
+                  <th>情绪</th>
+                  <th>考勤类型</th>
+                  <th>状态</th>
+                </tr>
+              </thead>
+              <tbody id="logBody"></tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <dialog id="cameraDialog">
+      <form method="dialog" class="dialog-body">
+        <h2 id="dialogTitle">添加摄像头</h2>
+        <label class="field">
+          <span>显示窗口</span>
+          <select id="dialogSlot">
+            <option value="1">win1</option>
+            <option value="2">win2</option>
+            <option value="3">win3</option>
+            <option value="4">win4</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>摄像头名称地址</span>
+          <input id="dialogName" placeholder="例如：实验室入口" />
+        </label>
+        <label class="field">
+          <span>显示模式</span>
+          <select id="dialogMode">
+            <option value="0">人脸识别模式</option>
+            <option value="1">人脸检测模式</option>
+            <option value="2">纯显示模式</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>视频源</span>
+          <input id="dialogSource" placeholder="0 / 本地视频路径 / RTSP 地址" />
+        </label>
+        <div class="button-row end">
+          <button value="cancel">取消</button>
+          <button class="primary" id="dialogOk" value="default">确定</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="./app.js"></script>
+  </body>
+</html>

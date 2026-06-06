@@ -66,12 +66,21 @@ class WebCameraSlot:
         self._last_saved_at: dict[str, float] = {}
         self._stable_predictions: list[dict[str, Any]] = []
         self._model_mtime = 0.0
-        self._last_fast_track_at = 0.0
+        self._last_track_submit_at = 0.0
         self._fast_track_gap = max(0.03, float(os.getenv("FACE_RECO_WEB_FAST_TRACK_GAP", "0.08")))
+        self._emotion_cache: dict[str, dict[str, Any]] = {}
+        self._emotion_cache_ttl = max(0.5, float(os.getenv("FACE_RECO_WEB_EMOTION_TTL", "2.5")))
+        self._emotion_min_gap = max(0.05, float(os.getenv("FACE_RECO_WEB_EMOTION_GAP", "0.45")))
+        self._last_emotion_submit_at = 0.0
+        self._emotion_future_name = ""
         self._font = self._load_font(24)
-        self._analysis_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"web-face-{self.slot}")
+        self._analysis_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"web-recog-{self.slot}")
+        self._track_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"web-track-{self.slot}")
+        self._emotion_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"web-emotion-{self.slot}")
         self._analysis_future: Future | None = None
-        self._label_min_confidence = max(0.0, min(100.0, float(os.getenv("FACE_RECO_WEB_LABEL_MIN_CONF", "30"))))
+        self._track_future: Future | None = None
+        self._emotion_future: Future | None = None
+        self._label_min_confidence = max(0.0, min(100.0, float(os.getenv("FACE_RECO_WEB_LABEL_MIN_CONF", "78"))))
         self._debug_predictions = os.getenv("FACE_RECO_WEB_DEBUG", "0") == "1"
         # [优化] 预判断监控点名称是否含 CJK，避免每帧重复扫描
         self._name_has_cjk: bool = _has_cjk(self.name)
@@ -100,6 +109,14 @@ class WebCameraSlot:
             self._thread.join(timeout=0.8)
         try:
             self._analysis_pool.shutdown(wait=False)
+        except Exception:
+            pass
+        try:
+            self._track_pool.shutdown(wait=False)
+        except Exception:
+            pass
+        try:
+            self._emotion_pool.shutdown(wait=False)
         except Exception:
             pass
 
@@ -188,6 +205,17 @@ class WebCameraSlot:
                 finally:
                     self._analysis_future = None
 
+            if self._track_future is not None and self._track_future.done():
+                try:
+                    tracked_boxes = self._track_future.result()
+                    last_predictions = self._merge_tracked_boxes(last_predictions, tracked_boxes)
+                except Exception:
+                    pass
+                finally:
+                    self._track_future = None
+
+            self._collect_emotion_result()
+
             has_detector = face_service is not None or getattr(self.app_service.pipeline, "_fallback_detector", None) is not None
             should_analyze = (
                 has_detector
@@ -204,8 +232,10 @@ class WebCameraSlot:
                 )
                 last_analysis = now
 
-            if self.display_mode == 0 and last_predictions:
-                last_predictions = self._fast_track_current_boxes(frame, last_predictions, now)
+            if self.display_mode == 0:
+                self._submit_track_task(frame, now)
+                self._submit_emotion_tasks(frame, last_predictions, now)
+                last_predictions = self._apply_cached_emotions(last_predictions, now)
 
             display = self._draw_overlay(frame, last_predictions, fps, title_needs_pil)
             ok, jpeg = cv2.imencode(".jpg", display, [int(cv2.IMWRITE_JPEG_QUALITY), 82])
@@ -292,10 +322,6 @@ class WebCameraSlot:
                 for pred in predictions:
                     pred = dict(pred)
                     pred["bbox"] = self._scale_bbox(tuple(map(int, pred.get("bbox", (0, 0, 0, 0)))), scale)
-                    try:
-                        self._attach_emotion_and_persist(frame, pred)
-                    except Exception as exc:
-                        print(f"web emotion/log failed on slot {self.slot}: {exc}")
                     output.append(pred)
                 return output
         except Exception as exc:
@@ -365,30 +391,35 @@ class WebCameraSlot:
 
     def _resolve_display_name(self, pred: dict[str, Any]) -> str:
         name = str(pred.get("name") or "").strip()
+        score = self._prediction_score(pred)
+        if score is not None and score < self._label_min_confidence:
+            return ""
         if name and name.lower() != "unknown" and name.replace("?", "").strip():
             return name
         label = pred.get("label")
         if label is None:
             return ""
+        if score is None or score < self._label_min_confidence:
+            return ""
         try:
             resolved = str(self.app_service.state.user_dic.get(int(label), "")).strip()
-            if resolved.replace("?", "").strip():
-                return resolved
+            return resolved if resolved.replace("?", "").strip() else ""
         except Exception:
-            resolved = ""
+            return ""
+
+    @staticmethod
+    def _prediction_score(pred: dict[str, Any]) -> float | None:
         confidence = pred.get("confidence")
         similarity = pred.get("similarity")
-        score = 0.0
         try:
             if confidence is not None:
-                score = float(confidence)
-            elif similarity is not None:
-                score = float(similarity) * 100.0
+                return float(confidence)
+            if similarity is not None:
+                value = float(similarity)
+                return value * 100.0 if value <= 1.5 else value
         except Exception:
-            score = 0.0
-        if score < self._label_min_confidence:
-            return ""
-        return ""
+            return None
+        return None
 
     @staticmethod
     def _bbox_center(bbox: tuple[int, int, int, int]) -> tuple[float, float]:
@@ -435,21 +466,24 @@ class WebCameraSlot:
         self._stable_predictions = [dict(item) for item in stabilized]
         return stabilized
 
-    def _fast_track_current_boxes(
-        self,
-        frame: np.ndarray,
-        previous: list[dict[str, Any]],
-        now: float,
-    ) -> list[dict[str, Any]]:
-        if now - self._last_fast_track_at < self._fast_track_gap:
-            return previous
-        self._last_fast_track_at = now
+    def _submit_track_task(self, frame: np.ndarray, now: float) -> None:
+        if now - self._last_track_submit_at < self._fast_track_gap:
+            return
+        if self._track_future is not None:
+            return
         fallback = getattr(self.app_service.pipeline, "_fallback_detector", None)
         if fallback is None:
-            return previous
+            return
+        self._last_track_submit_at = now
+        self._track_future = self._track_pool.submit(self._detect_track_boxes, frame.copy())
+
+    def _detect_track_boxes(self, frame: np.ndarray) -> list[tuple[int, int, int, int]]:
+        fallback = getattr(self.app_service.pipeline, "_fallback_detector", None)
+        if fallback is None:
+            return []
         try:
             width = frame.shape[1]
-            target_width = 480
+            target_width = max(240, min(640, int(os.getenv("FACE_RECO_WEB_TRACK_WIDTH", "480"))))
             if width > target_width:
                 scale = width / float(target_width)
                 small_h = max(1, int(frame.shape[0] / scale))
@@ -460,14 +494,21 @@ class WebCameraSlot:
             gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
             boxes = fallback.detectMultiScale(gray, 1.2, 4)
         except Exception:
-            return previous
+            return []
         if boxes is None or len(boxes) == 0:
-            return previous
+            return []
+        return [self._scale_bbox(tuple(map(int, box)), scale) for box in boxes]
 
-        current_boxes = [self._scale_bbox(tuple(map(int, box)), scale) for box in boxes]
-        tracked: list[dict[str, Any]] = []
+    def _merge_tracked_boxes(
+        self,
+        previous: list[dict[str, Any]],
+        boxes: list[tuple[int, int, int, int]],
+    ) -> list[dict[str, Any]]:
+        if not boxes:
+            return previous
+        merged: list[dict[str, Any]] = []
         used_prev: set[int] = set()
-        for box in current_boxes:
+        for box in boxes:
             best_idx = -1
             best_score = 999.0
             for idx, old in enumerate(previous):
@@ -482,15 +523,95 @@ class WebCameraSlot:
                 used_prev.add(best_idx)
                 item = dict(previous[best_idx])
                 item["bbox"] = tuple(map(int, box))
-                item["fast_tracked"] = True
+                item["tracked"] = True
             else:
                 item = {"bbox": tuple(map(int, box)), "name": ""}
-            tracked.append(item)
+            merged.append(item)
+        self._stable_predictions = [dict(item) for item in merged]
+        return merged
 
-        if tracked:
-            self._stable_predictions = [dict(item) for item in tracked]
-            return tracked
-        return previous
+    def _collect_emotion_result(self) -> None:
+        if self._emotion_future is None or not self._emotion_future.done():
+            return
+        try:
+            name, emotion, ts = self._emotion_future.result()
+            if name:
+                self._emotion_cache[name] = {"emotion": emotion, "ts": float(ts)}
+        except Exception:
+            pass
+        finally:
+            self._emotion_future = None
+            self._emotion_future_name = ""
+
+    def _submit_emotion_tasks(self, frame: np.ndarray, predictions: list[dict[str, Any]], now: float) -> None:
+        if self._emotion is None or self._emotion_future is not None:
+            return
+        if now - self._last_emotion_submit_at < self._emotion_min_gap:
+            return
+        gray = None
+        for pred in predictions:
+            name = self._resolve_display_name(pred)
+            if not name:
+                continue
+            cached = self._emotion_cache.get(name)
+            if cached and now - float(cached.get("ts", 0.0)) <= self._emotion_cache_ttl:
+                continue
+            x, y, w, h = tuple(map(int, pred.get("bbox", (0, 0, 0, 0))))
+            if gray is None:
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            crop = gray[max(0, y) : max(0, y + h), max(0, x) : max(0, x + w)]
+            if crop.size == 0:
+                continue
+            face_copy = np.ascontiguousarray(crop.copy())
+            self._last_emotion_submit_at = now
+            self._emotion_future_name = name
+            self._emotion_future = self._emotion_pool.submit(self._predict_emotion, name, face_copy, now)
+            return
+
+    def _predict_emotion(self, name: str, face_gray: np.ndarray, ts: float) -> tuple[str, str, float]:
+        emotion = "\u4e2d\u6027"
+        if self._emotion is not None:
+            try:
+                emotion, _ = self._emotion.predict(face_gray)
+            except Exception:
+                emotion = "\u4e2d\u6027"
+        return name, emotion, ts
+
+    def _apply_cached_emotions(self, predictions: list[dict[str, Any]], now: float) -> list[dict[str, Any]]:
+        output: list[dict[str, Any]] = []
+        for pred in predictions:
+            item = dict(pred)
+            name = self._resolve_display_name(item)
+            if not name:
+                output.append(item)
+                continue
+            item["name"] = name
+            cached = self._emotion_cache.get(name)
+            emotion = "\u4e2d\u6027"
+            if cached and now - float(cached.get("ts", 0.0)) <= self._emotion_cache_ttl:
+                emotion = str(cached.get("emotion") or emotion)
+            item["emotion"] = emotion
+            try:
+                self._persist_known_face(name, emotion)
+            except Exception as exc:
+                print(f"web emotion/log failed on slot {self.slot}: {exc}")
+            output.append(item)
+        self._stable_predictions = [dict(item) for item in output]
+        return output
+
+    def _persist_known_face(self, name: str, emotion: str) -> None:
+        if not name:
+            return
+        key = (name, emotion)
+        self._face_counts[key] = self._face_counts.get(key, 0) + 1
+        if self._face_counts[key] < 5:
+            return
+        self._face_counts[key] = 0
+        now = time.monotonic()
+        if now - self._last_saved_at.get(name, 0.0) < 8.0:
+            return
+        self._last_saved_at[name] = now
+        self._save_recognition_event(name, emotion)
 
     def _attach_emotion_and_persist(self, frame: np.ndarray, pred: dict[str, Any]) -> None:
         name = self._resolve_display_name(pred)
@@ -507,16 +628,7 @@ class WebCameraSlot:
             except Exception:
                 emotion = "\u4e2d\u6027"
         pred["emotion"] = emotion
-        key = (name, emotion)
-        self._face_counts[key] = self._face_counts.get(key, 0) + 1
-        if self._face_counts[key] < 5:
-            return
-        self._face_counts[key] = 0
-        now = time.monotonic()
-        if now - self._last_saved_at.get(name, 0.0) < 8.0:
-            return
-        self._last_saved_at[name] = now
-        self._save_recognition_event(name, emotion)
+        self._persist_known_face(name, emotion)
 
     def _save_recognition_event(self, name: str, emotion: str) -> None:
         now_dt = dt.datetime.now().replace(microsecond=0)

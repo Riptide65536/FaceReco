@@ -25,12 +25,16 @@ class FaceRecognitionService:
     def __init__(
         self,
         cascade_path: str = asset_path("haarcascade_frontalface_default.xml"),
-        model_path: str = str(Path(MODEL_DIR) / "model.yml"),
+        model_path: Optional[str] = None,
+        lbph_model_path: Optional[str] = None,
         confidence_threshold: float = 68.0,
         labels: Optional[dict[int, str]] = None,
     ) -> None:
         self.cascade_path = Path(cascade_path)
-        self.model_path = Path(model_path)
+        self.deep_model_path = Path(model_path) if model_path else Path(MODEL_DIR) / "arcface_gallery.npz"
+        self.lbph_model_path = Path(lbph_model_path) if lbph_model_path else Path(MODEL_DIR) / "lbph_model.yml"
+        self.legacy_model_path = Path(MODEL_DIR) / "model.yml"
+        self.model_path = self.deep_model_path
         self.confidence_threshold = confidence_threshold
         self.labels = labels or {}
         # [优化] 用 RLock 保护 gallery 读写，推理本身不持锁
@@ -52,6 +56,7 @@ class FaceRecognitionService:
             self._lbph_threshold = 68.0
 
         self._backend = None
+        self._deep_error_message = ""
         self._deep_providers: list[str] = []
         self._deep_input_size = (112, 112)
 
@@ -72,7 +77,8 @@ class FaceRecognitionService:
         )
 
         self._init_backend_with_fallback()
-        if self.model_path.exists():
+        self._select_model_path_for_backend()
+        if any(path.exists() for path in self._model_load_candidates()):
             try:
                 self.load_model()
             except Exception:
@@ -88,6 +94,9 @@ class FaceRecognitionService:
 
     def backend_mode(self) -> str:
         return self._backend_mode
+
+    def deep_error_text(self) -> str:
+        return str(self._deep_error_message or "").strip()
 
     def set_realtime_mode(self, mode: str) -> None:
         mode = str(mode or "").strip().lower()
@@ -109,9 +118,12 @@ class FaceRecognitionService:
         try:
             self._backend = self._create_deep_backend()
             self._backend_mode = "deep"
+            self._deep_error_message = ""
             return
-        except Exception:
-            pass
+        except Exception as exc:
+            self._deep_error_message = str(exc)
+            if os.getenv("FACE_RECO_QUIET", "0") != "1":
+                print("deep face backend unavailable, falling back:", exc)
         try:
             self._backend = self._create_lbph_backend()
             self._backend_mode = "lbph"
@@ -121,11 +133,23 @@ class FaceRecognitionService:
         self._backend = self._create_lite_backend()
         self._backend_mode = "lite"
 
-    def _create_deep_backend(self):
-        with self._backend_status_lock:
-            if self._backend_error_message:
-                raise RuntimeError(self._backend_error_message)
+    def _select_model_path_for_backend(self) -> None:
+        if self._backend_mode in {"deep", "lite"}:
+            self.model_path = self.deep_model_path
+        elif self._backend_mode == "lbph":
+            self.model_path = self.lbph_model_path
 
+    def _model_load_candidates(self) -> list[Path]:
+        if self._backend_mode in {"deep", "lite"}:
+            candidates = [self.deep_model_path]
+            if self.legacy_model_path != self.deep_model_path:
+                candidates.append(self.legacy_model_path)
+            return candidates
+        if self._backend_mode == "lbph":
+            return [self.lbph_model_path]
+        return [self.model_path]
+
+    def _create_deep_backend(self):
         self._prime_torch_runtime()
 
         try:
@@ -133,7 +157,8 @@ class FaceRecognitionService:
         except Exception as exc:
             message = (
                 "Deep face backend is unavailable. Install: insightface + onnxruntime. "
-                "See README for setup."
+                f"See README for setup. Python={sys.executable}; "
+                f"import error={type(exc).__name__}: {exc}"
             )
             with self._backend_status_lock:
                 self._backend_error_message = message
@@ -287,7 +312,8 @@ class FaceRecognitionService:
             print("ort available providers:", available)
 
         enable_trt = os.getenv("FACE_RECO_ENABLE_TRT", "0") == "1"
-        order = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        prefer_gpu_by_default = os.getenv("FACE_RECO_DISABLE_CUDA", "0") != "1"
+        order = ["CUDAExecutionProvider", "CPUExecutionProvider"] if prefer_gpu_by_default else ["CPUExecutionProvider"]
         if enable_trt:
             order.insert(1, "TensorrtExecutionProvider")
         selected = [p for p in order if p in available]
@@ -297,6 +323,8 @@ class FaceRecognitionService:
             if not pref_norm.endswith("ExecutionProvider"):
                 pref_norm = f"{pref_norm}ExecutionProvider"
             if pref_norm in selected:
+                selected = [pref_norm] + [p for p in selected if p != pref_norm]
+            elif pref_norm in available:
                 selected = [pref_norm] + [p for p in selected if p != pref_norm]
 
         if not selected:
@@ -309,6 +337,8 @@ class FaceRecognitionService:
                 if verbose:
                     print("cuda provider probe failed, falling back to CPU")
                 selected = ["CPUExecutionProvider"]
+        if not selected:
+            selected = ["CPUExecutionProvider"]
         return selected
 
     @staticmethod
@@ -326,6 +356,8 @@ class FaceRecognitionService:
                     str(model_path),
                     providers=["CUDAExecutionProvider", "CPUExecutionProvider"],
                 )
+                if "CUDAExecutionProvider" not in sess.get_providers():
+                    return False
                 x = np.zeros((1, 1), dtype=np.float32)
                 sess.run(None, {"x": x})
             return True
@@ -359,6 +391,14 @@ class FaceRecognitionService:
             return
 
         candidate_dirs: list[Path] = []
+        try:
+            import torch  # type: ignore
+
+            torch_lib = Path(torch.__file__).resolve().parent / "lib"
+            if torch_lib.exists():
+                candidate_dirs.append(torch_lib)
+        except Exception:
+            pass
         for sp in [Path(p) for p in sys.path if "site-packages" in p]:
             nvidia_root = sp / "nvidia"
             if not nvidia_root.exists():
@@ -725,19 +765,30 @@ class FaceRecognitionService:
         import numpy as np
         with self._lock:
             if self._backend_mode in {"deep", "lite"}:
-                with open(self.model_path, "rb") as fd:
-                    payload = np.load(fd, allow_pickle=False)
-                    labels = payload["labels"].astype("int32").tolist()
-                    embeddings = payload["embeddings"].astype("float32")
+                model_path = next((path for path in self._model_load_candidates() if path.exists()), self.model_path)
+                try:
+                    with open(model_path, "rb") as fd:
+                        payload = np.load(fd, allow_pickle=False)
+                        labels = payload["labels"].astype("int32").tolist()
+                        embeddings = payload["embeddings"].astype("float32")
+                except Exception as exc:
+                    self._gallery = {}
+                    raise RuntimeError(
+                        "Deep face model is not a valid embedding gallery. "
+                        "Please update/retrain the face model."
+                    ) from exc
                 self._gallery = {
                     int(label): self._normalize(embeddings[idx])
                     for idx, label in enumerate(labels)
                 }
+                self.model_path = model_path
                 return True
 
             if self.recognizer is None:
                 return False
-            self.recognizer.read(str(self.model_path))
+            model_path = next((path for path in self._model_load_candidates() if path.exists()), self.model_path)
+            self.recognizer.read(str(model_path))
+            self.model_path = model_path
             return True
 
     def detect_faces(self, frame: "np.ndarray") -> list[tuple[int, int, int, int]]:
@@ -886,6 +937,7 @@ class FaceRecognitionService:
                 embeddings_np = np.stack(gallery_embeddings, axis=0).astype("float32")
                 labels_np = np.array(gallery_labels, dtype="int32")
 
+                self.model_path = self.deep_model_path
                 self.model_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(self.model_path, "wb") as fd:
                     np.savez_compressed(fd, labels=labels_np, embeddings=embeddings_np)
@@ -900,6 +952,7 @@ class FaceRecognitionService:
                 raise RuntimeError("LBPH recognizer is not initialized.")
             prepared_samples = [self.to_gray(sample) for sample in samples]
             self.recognizer.train(prepared_samples, labels_array)
+            self.model_path = self.lbph_model_path
             self.model_path.parent.mkdir(parents=True, exist_ok=True)
             self.recognizer.save(str(self.model_path))
 

@@ -63,7 +63,8 @@ class RecognitionPipeline:
     def _create_face_service(self):
         try:
             service = FaceRecognitionService(
-                model_path=str(Path(MODEL_DIR) / "model.yml"),
+                model_path=str(Path(MODEL_DIR) / "arcface_gallery.npz"),
+                lbph_model_path=str(Path(MODEL_DIR) / "lbph_model.yml"),
                 confidence_threshold=self.confidence_threshold,
                 labels=dict(self.state.user_dic),
             )
@@ -102,6 +103,17 @@ class RecognitionPipeline:
         except Exception:
             return "unknown"
 
+    def deep_error_text(self) -> str:
+        if self.face_service is None:
+            return self.face_service_error_text()
+        try:
+            getter = getattr(self.face_service, "deep_error_text", None)
+            if callable(getter):
+                return str(getter()).strip()
+        except Exception:
+            pass
+        return ""
+
     @staticmethod
     def _provider_alias(provider_name: str) -> str:
         mapping = {
@@ -134,13 +146,14 @@ class RecognitionPipeline:
         primary = self._provider_alias(providers[0])
         fallback = [self._provider_alias(item) for item in providers[1:]]
         if fallback:
-            return f"ArcFace：{primary}（回退 {' / '.join(fallback)}）"
-        return f"ArcFace：{primary}"
+            return f"YOLO + ArcFace：{primary}（回退 {' / '.join(fallback)}）"
+        return f"YOLO + ArcFace：{primary}"
 
     def current_provider_tooltip(self) -> str:
         backend_mode = self.current_backend_mode()
         provider_text = self.current_provider_text()
         display_text = self.current_provider_display_text()
+        deep_error = self.deep_error_text()
         if backend_mode == "deep":
             return (
                 f"{display_text}\n"
@@ -148,13 +161,11 @@ class RecognitionPipeline:
                 "这表示 ArcFace / InsightFace 的识别链优先使用前面的 Provider，失败时再回退。"
             )
         if backend_mode == "lbph":
-            return (
-                "当前识别后端为 LBPH 降级模式，ArcFace / InsightFace 深度识别链当前未启用。"
-            )
+            reason = f"\n降级原因：{deep_error}" if deep_error else ""
+            return "当前识别后端为 LBPH 降级模式，ArcFace / InsightFace 深度识别链当前未启用。" + reason
         if backend_mode == "lite":
-            return (
-                "当前识别后端为 Lite 应急模式，ArcFace / InsightFace 深度识别链当前未启用。"
-            )
+            reason = f"\n降级原因：{deep_error}" if deep_error else ""
+            return "当前识别后端为 Lite 应急模式，ArcFace / InsightFace 深度识别链当前未启用。" + reason
         return f"{display_text}\nONNX Runtime Providers：{provider_text}"
 
     def face_service_error_text(self) -> str:
@@ -162,6 +173,9 @@ class RecognitionPipeline:
 
     def last_train_error_text(self) -> str:
         return self._last_train_error.strip()
+
+    def set_last_train_error(self, message: str) -> None:
+        self._last_train_error = str(message or "").strip()
 
     def _detect_faces_for_training(self, gray_frame: np.ndarray) -> list[tuple[int, int, int, int]]:
         if self.face_service is not None:

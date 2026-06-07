@@ -23,7 +23,7 @@ def config_path(name: str) -> str:
     return str(CONFIG_DIR / name)
 
 
-def model_path(name: str = 'model.yml') -> str:
+def model_path(name: str = 'arcface_gallery.npz') -> str:
     return str(MODEL_DIR / name)
 
 

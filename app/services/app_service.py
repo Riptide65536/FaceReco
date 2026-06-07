@@ -28,11 +28,25 @@ class AppService:
         self.state.face_samples = samples
         self.state.id_lists = labels
         self.state.update_user_stats()
+        self._mark_incompatible_model_pending()
 
     def persist_training_state(self) -> None:
         self.config_repo.save_total_user(self.state.total_user)
         self.config_repo.save_id_lists(self.state.id_lists)
         self.config_repo.save_user_dic(self.state.user_dic)
+
+    def _mark_incompatible_model_pending(self) -> None:
+        if not self.data_repo.model_exists():
+            return
+        if not self.pipeline.ensure_face_service_ready():
+            return
+        if self.pipeline.current_backend_mode() not in {"deep", "lite"}:
+            return
+        try:
+            self.pipeline.face_service.load_model()
+        except Exception as exc:
+            self.pipeline.set_last_train_error(str(exc))
+            self.mark_model_pending()
 
     def rebuild_and_train(self) -> bool:
         samples, labels = self.pipeline.rebuild_training_data(self.data_repo)
@@ -47,12 +61,16 @@ class AppService:
             self.persist_training_state()
             return False
         if len(samples) == 0:
-            model_path = self.data_repo.model_file_path()
-            if model_path.exists():
-                try:
-                    model_path.unlink()
-                except OSError:
-                    pass
+            for model_path in (
+                self.data_repo.deep_model_file_path(),
+                self.data_repo.lbph_model_file_path(),
+                self.data_repo.legacy_model_file_path(),
+            ):
+                if model_path.exists():
+                    try:
+                        model_path.unlink()
+                    except OSError:
+                        pass
             ok = True
         else:
             ok = self.pipeline.train_and_save(samples, labels)
@@ -74,12 +92,16 @@ class AppService:
             self.persist_training_state()
             return False
         if len(self.state.face_samples) == 0:
-            model_path = self.data_repo.model_file_path()
-            if model_path.exists():
-                try:
-                    model_path.unlink()
-                except OSError:
-                    pass
+            for model_path in (
+                self.data_repo.deep_model_file_path(),
+                self.data_repo.lbph_model_file_path(),
+                self.data_repo.legacy_model_file_path(),
+            ):
+                if model_path.exists():
+                    try:
+                        model_path.unlink()
+                    except OSError:
+                        pass
             ok = True
         else:
             ok = self.pipeline.train_and_save(self.state.face_samples, self.state.id_lists)

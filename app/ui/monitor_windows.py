@@ -429,7 +429,7 @@ class MWindow():
         provider_display = _app_service().pipeline.current_provider_display_text()
         provider_tooltip = _app_service().pipeline.current_provider_tooltip()
         mode_map = {
-            'deep': '深度模型',
+            'deep': 'YOLO + ArcFace',
             'lbph': 'LBPH（降级）',
             'lite': 'Lite（应急降级）',
             'unavailable': '不可用',

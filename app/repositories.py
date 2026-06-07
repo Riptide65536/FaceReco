@@ -200,6 +200,8 @@ class DataRepository:
             "model.yaml",
             "model.npz",
             "model.onnx",
+            "arcface_gallery.npz",
+            "lbph_model.yml",
             "pending_update.flag",
         }
         for item in self.model_dir.iterdir():
@@ -211,10 +213,26 @@ class DataRepository:
                 pass
 
     def model_file_path(self) -> Path:
+        return self.deep_model_file_path()
+
+    def deep_model_file_path(self) -> Path:
+        return self.model_dir / "arcface_gallery.npz"
+
+    def lbph_model_file_path(self) -> Path:
+        return self.model_dir / "lbph_model.yml"
+
+    def legacy_model_file_path(self) -> Path:
         return self.model_dir / "model.yml"
 
     def model_exists(self) -> bool:
-        return self.model_file_path().exists()
+        return any(
+            path.exists()
+            for path in (
+                self.deep_model_file_path(),
+                self.lbph_model_file_path(),
+                self.legacy_model_file_path(),
+            )
+        )
 
     def _model_pending_flag_path(self) -> Path:
         return self.model_dir / "pending_update.flag"

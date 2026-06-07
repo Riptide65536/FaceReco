@@ -371,7 +371,12 @@ class WebCameraSlot:
 
     def _current_model_mtime(self) -> float:
         try:
-            return float(self.app_service.data_repo.model_file_path().stat().st_mtime)
+            paths = (
+                self.app_service.data_repo.deep_model_file_path(),
+                self.app_service.data_repo.lbph_model_file_path(),
+                self.app_service.data_repo.legacy_model_file_path(),
+            )
+            return max(float(path.stat().st_mtime) for path in paths if path.exists())
         except Exception:
             return 0.0
 

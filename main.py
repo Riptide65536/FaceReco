@@ -5,11 +5,16 @@
 可以全彩色显示
 '''
 
+from paths import asset_path
+from app.services.app_service import AppService
+
+# Build the recognition service before PySide2 installs its import hook; otherwise
+# onnxruntime can fail to load its native DLLs on Windows.
+APP_SERVICE = AppService()
+
 from PySide2.QtGui import QFont
 from PySide2.QtWidgets import QApplication
 
-from paths import asset_path
-from app.services.app_service import AppService
 from app.ui.auth_windows import LogInWindow
 from app.ui.monitor_windows import MWindow, configure as configure_monitor_windows
 
@@ -88,7 +93,6 @@ APP_STYLESHEET = """
     QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal { background: transparent; }
 """.replace("__COMBO_ARROW_ICON__", COMBO_ARROW_ICON)
 
-APP_SERVICE = AppService()
 configure_monitor_windows(APP_SERVICE, DEFAULT_UI_FONT, APP_STYLESHEET)
 
 
